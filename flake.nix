@@ -18,13 +18,20 @@
 
       #packages.x86_64-linux.hello = nixpkgs.legacyPackages.x86_64-linux.hello;
       #packages.x86_64-linux.default = self.packages.x86_64-linux.hello;
-      devShells = forAllSystems ({pkgs}: {
+      devShells = forAllSystems ({pkgs}: 
+      let
+        selected-dotnet-sdk = pkgs.dotnetCorePackages.sdk_8_0_1xx;
+      in 
+      {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            dotnetCorePackages.sdk_8_0_1xx
+            selected-dotnet-sdk
             steam-run
             jetbrains.rider
           ];
+          shellHook = ''
+            export MSBuildSDKsPath=${selected-dotnet-sdk}/sdk/${selected-dotnet-sdk}/Sdks
+          '';
         };
       });
     };

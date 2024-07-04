@@ -30,7 +30,7 @@
             jetbrains.rider
           ];
           shellHook = ''
-            export MSBuildSDKsPath=${selected-dotnet-sdk}/sdk/${selected-dotnet-sdk}/Sdks
+            export MSBuildSDKsPath=${selected-dotnet-sdk}/sdk/${selected-dotnet-sdk.version}/Sdks
           '';
         };
       });

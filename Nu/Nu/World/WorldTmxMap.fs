@@ -13,6 +13,19 @@ open Prime
 
 [<RequireQualifiedAccess>]
 module TmxMap =
+    type Rect = {
+        Pos: Vector3
+        Dim: Vector3 
+    }
+    type Poly = {
+        Pos: Vector3
+        Points: Vector3 array
+    }
+    type Shape =
+        | Box of Rect
+        | Ellipse of Rect
+        | Polygon of Poly
+        | Polyline of Poly
 
     /// Make a TmxMap from the content of a stream.
     let makeFromStream (stream : Stream) =
@@ -93,25 +106,27 @@ module TmxMap =
         xml.Add (XAttribute (XName.op_Implicit "height", height))
         TmxObject xml
 
+    
+    (*
     let rec importShape shape center (tileSize : Vector2) (tileOffset : Vector2) =
         let transformOpt = Some (Affine.makeTranslation (center * tileSize.V3 + tileOffset.V3))
         match shape with
         | EmptyShape as empty ->
             empty
         | BoxShape box ->
-            if Option.isSome box.TransformOpt then Log.error "Transform of importing tile map shape should be None."
+            Log.traceIf (Option.isSome box.TransformOpt) "Transform of importing tile map shape should be None."
             BoxShape { box with Size = box.Size * tileSize.V3; TransformOpt = transformOpt }
         | SphereShape sphere ->
-            if Option.isSome sphere.TransformOpt then Log.error "Transform of importing tile map shape should be None."
+            Log.traceIf (Option.isSome sphere.TransformOpt) "Transform of importing tile map shape should be None."
             SphereShape { sphere with Radius = sphere.Radius * tileSize.Y; TransformOpt = transformOpt }
         | CapsuleShape capsule ->
-            if Option.isSome capsule.TransformOpt then Log.error "Transform of importing tile map shape should be None."
+            Log.traceIf (Option.isSome capsule.TransformOpt) "Transform of importing tile map shape should be None."
             CapsuleShape { capsule with Height = tileSize.Y; Radius = capsule.Radius * tileSize.Y; TransformOpt = transformOpt }
         | BoxRoundedShape boxRounded ->
-            if Option.isSome boxRounded.TransformOpt then Log.error "Transform of importing tile map shape should be None."
+            Log.traceIf (Option.isSome boxRounded.TransformOpt) "Transform of importing tile map shape should be None."
             BoxRoundedShape { boxRounded with Size = boxRounded.Size * tileSize.V3; Radius = boxRounded.Radius; TransformOpt = transformOpt }
         | PointsShape points ->
-            if Option.isSome points.TransformOpt then Log.error "Transform of importing tile map shape should be None."
+            Log.traceIf (Option.isSome points.TransformOpt) "Transform of importing tile map shape should be None."
             PointsShape { points with Points = Array.map (fun point -> point * tileSize.V3) points.Points; TransformOpt = transformOpt }
         | GeometryShape _ as geometry ->
             geometry
@@ -123,6 +138,42 @@ module TmxMap =
             terrain
         | BodyShapes shapes ->
             BodyShapes (List.map (fun shape -> importShape shape center tileSize tileOffset) shapes)
+    *)
+    
+    let rec importShape shape (tileSize : Vector2) (tileOffset : Vector2) : BodyShape =
+        let tileTranslation = (*center * tileSize.V3 + *)tileOffset.V3
+        match shape with
+        | Box box ->
+            BoxShape {
+                Size = box.Dim
+                TransformOpt =
+                    box.Pos + tileTranslation
+                    |> Affine.makeTranslation
+                    |> Some
+                PropertiesOpt = None 
+            }
+        | Ellipse ellipse ->
+            let minDim = min ellipse.Dim.X ellipse.Dim.Y
+            SphereShape {
+                Radius = minDim
+                TransformOpt = Some {
+                    Translation = ellipse.Pos + tileTranslation
+                    Rotation = Quaternion.Zero
+                    Scale = v3 (ellipse.Dim.X / minDim) (ellipse.Dim.Y / minDim) 0.0f
+                } 
+                PropertiesOpt = None 
+            }
+        | Polygon poly
+        // TODO: Handle these
+        | Polyline poly ->
+            PointsShape {
+                Points = poly.Points
+                TransformOpt =
+                    poly.Pos + tileTranslation - (tileSize.V3 * 0.5f)
+                    |> Affine.makeTranslation
+                    |> Some
+                PropertiesOpt = None
+            }
 
     let getDescriptor tileMapPosition tileSizeDivisor (tileMap : TmxMap) =
         let tileSizeDivisor = max 1 tileSizeDivisor
@@ -194,11 +245,64 @@ module TmxMap =
                 else ValueNone
             | None -> ValueNone
         else ValueNone
+        
+    let getTileBodyShapes (tile: TmxTilesetTile) =
+        tile.ObjectGroups
+        |> Seq.collect _.Objects
+        |> Seq.collect (fun obj ->
+            match obj.ObjectType with
+            | TmxObjectType.Basic
+            | TmxObjectType.Ellipse ->
+               { Pos = v3 (single obj.X) (single obj.Y) 0.0f
+                 Dim = v3 (single obj.Width) (single obj.Height) 0.0f }
+               |> (fun dims -> if obj.ObjectType = TmxObjectType.Basic then Box dims else Ellipse dims)
+               |> Seq.singleton
+            | TmxObjectType.Polygon
+            | TmxObjectType.Polyline ->
+               obj.Points
+               |> Seq.map (fun p -> v3 (single p.X) (single p.Y) 0.0f)
+               |> Array.ofSeq
+               |> (fun points -> {Points = points; Pos = v3 (single obj.X) (single obj.Y) 0.0f })
+               |> (fun poly ->
+                   if obj.ObjectType = TmxObjectType.Polygon then Polygon poly else Polyline poly)
+               |> Seq.singleton
+            // It appears this object type is exclusive to maps,
+            // so shouldn't appear here
+            | TmxObjectType.Tile
+            | _ -> [])
+        // TODO: Fuse together shapes when possible
 
     let getTileLayerBodyShapes (tileLayer : TmxLayer) tileMapDescriptor =
         
         // construct a list of body shapes
         let bodyShapes = List<BodyShape> ()
+        let localShapesLookup = dictPlus<int, List<Shape>> HashIdentity.Structural []
+        for i in 0 .. dec tileLayer.Tiles.Length do
+            let mutable tileDescriptor = Unchecked.defaultof<_>
+            if tryGetTileDescriptor i tileLayer tileMapDescriptor &tileDescriptor then
+                match tileDescriptor.TileSetTileOpt with
+                | Some tileSetTile ->
+                    let localShapes =
+                        match localShapesLookup.TryGetValue tileSetTile.Id with
+                        | true, value -> value
+                        | _ ->
+                            let computed = ResizeArray<_> (getTileBodyShapes tileSetTile)
+                            localShapesLookup.Add(tileSetTile.Id, computed)
+                            computed
+                    let tileCenter =
+                        v2
+                            (tileDescriptor.TilePositionF.X + tileMapDescriptor.TileSizeF.X * 0.5f)
+                            (tileDescriptor.TilePositionF.Y + tileMapDescriptor.TileSizeF.Y * 0.5f)
+                    let importedShapes =
+                        localShapes
+                        |> Seq.map(fun s -> importShape s tileMapDescriptor.TileSizeF tileCenter)
+                    bodyShapes.AddRange(importedShapes)
+                    ()
+                | None -> ()
+            else
+                ()
+                
+        (*
         let tileBoxes = dictPlus<single, Box3 List> HashIdentity.Structural []
         for i in 0 .. dec tileLayer.Tiles.Length do
 
@@ -281,6 +385,7 @@ module TmxMap =
         // convert strips into BodyShapes and add to the resulting list
         for strip in strips do
             strip |> BoxShape.ofBox3 |> BoxShape |> bodyShapes.Add
+        *)
 
         // fin
         bodyShapes
@@ -372,7 +477,7 @@ module TmxMap =
                         let tiles = SList.make ()
                         let mutable xS = 0.0f
                         let mutable xO = r.X
-                        xO <- xO + 0.0001f |> floor // NOTE: attempts to fix #832. Alternatively, we could instead do + 0.5f |> floor on xI.
+                        xO <- xO + 0.0001f |> floor
                         while xO < r2.X + tileSize.X do
                             let xI = int (xO / tileSize.X)
                             if xO >= 0.0f && xI >= 0 then

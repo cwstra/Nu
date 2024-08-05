@@ -51,6 +51,7 @@ module Constants =
         let CueRunSpeed = 2.0f
         let CueMoseySpeed = 0.5f
         let CueCrawlSpeed = 0.25f
+        let SongVolumeDefault = 0.6f
 
     [<RequireQualifiedAccess>]
     module Field =
@@ -61,13 +62,8 @@ module Constants =
         let RoomSize = v2iDup 32
         let AvatarCollisionShapeIndex = 0
         let AvatarSensorShapeIndex = 1
-#if DEV
-        let AvatarWalkForce = 60000.0f
-        let AvatarWalkForceMouse = 66000.0f
-#else
         let AvatarWalkForce = 20000.0f
         let AvatarWalkForceMouse = 22000.0f
-#endif
         let AvatarIdleSpeedMax = 5.0f
         let SpiritMovementDuration = 60L
         let SpiritWalkSpeed = 2.75f
@@ -114,15 +110,15 @@ module Constants =
         let ActionTimeCancelReduction = 333.0f
         let ActionTimeCancelMinimum = ActionTimeAutoBattleReady + 25.0f // must be more than ActionTimeAutoBattleReady
         let StatusBurndownTime = 4500.0f
-        let AffinityResistanceScalar = 0.75f
-        let AffinityVulnerabilityScalar = 1.25f
+        let AffinityResistanceScalar = 0.5f
+        let AffinityVulnerabilityScalar = 1.5f
         let AllyActionTimeDelta = 4.0f
         let AllyActionTimeSpacing = 1000.0f / 3.0f
         let EnemyActionTimeDelta = 3.0f
         let PacedSpeedScalar = 0.25f
         let SwiftSpeedScalar = 0.5f
         let DefendingScalar = 0.5f
-        let TechProbabilityReductionScalar = 0.667f // for when Jinn isn't in battle to cancel
+        let TechProbabilityReductionScalar = 0.5f // for when Jinn isn't in battle to cancel
         let PoisonDrainRateSlow = 0.05f
         let PoisonDrainRateMedium = 0.1f
         let PoisonDrainRateFast = 0.15f
@@ -160,6 +156,7 @@ module Box3Extensions =
         member this.CenterOffset2 = this.Center + v3 0.0f -96.0f 0.0f
         member this.CenterOffset3 = this.Center + v3 0.0f -42.0f 0.0f
         member this.CenterOffset4 = this.Center + v3 0.0f 36.0f 0.0f
+        member this.CenterOffset5 = this.Center + v3 0.0f -12.0f 0.0f
         member this.BottomOffset = this.Bottom + v3 0.0f -6.0f 0.0f
         member this.BottomOffset2 = this.Bottom + v3 0.0f -10.0f 0.0f
         member this.BottomOffset3 = this.Bottom + v3 0.0f -48.0f 0.0f

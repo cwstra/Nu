@@ -435,8 +435,8 @@ type TextFacet () =
          define Entity.FontStyling Set.empty
          define Entity.Justification (Justified (JustifyCenter, JustifyMiddle))
          define Entity.TextMargin v2Zero
-         define Entity.TextColor Color.Black
-         define Entity.TextDisabledColor (Color (0.25f, 0.25f, 0.25f, 0.75f))
+         define Entity.TextColor Color.White
+         define Entity.TextDisabledColor (Color (0.75f, 0.75f, 0.75f, 0.75f))
          define Entity.TextOffset v2Zero
          define Entity.TextShift 0.5f]
 
@@ -2125,12 +2125,12 @@ type LightProbe3dFacet () =
         | AppendProperties append ->
             let world =
                 if ImGui.Button "Rerender Light Map" then
-                    let world = append.Snapshot world
+                    let world = append.Snapshot RerenderLightMap world
                     entity.SetProbeStale true world
                 else world
             let world =
                 if ImGui.Button "Recenter in Probe Bounds" then
-                    let world = append.Snapshot world
+                    let world = append.Snapshot RencenterInProbeBounds world
                     let probeBounds = entity.GetProbeBounds world
                     if Option.isSome (entity.GetMountOpt world)
                     then entity.SetPositionLocal probeBounds.Center world
@@ -2138,7 +2138,7 @@ type LightProbe3dFacet () =
                 else world
             let world =
                 if ImGui.Button "Reset Probe Bounds" then
-                    let world = append.Snapshot world
+                    let world = append.Snapshot ResetProbeBounds world
                     entity.ResetProbeBounds world
                 else world
             world

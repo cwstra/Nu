@@ -130,6 +130,19 @@ type [<CustomEquality; CustomComparison>] StatusType =
     | Magic of bool * bool // true = Up, false = Down; true = 2, false = 1
     | Shield of bool * bool // true = Up, false = Down; true = 2, false = 1
 
+    member this.Debuff =
+        match this with
+        | Poison -> true
+        | Silence -> true
+        | Sleep -> true
+        | Curse -> true
+        | Confuse -> true
+        | Time false | Power (false, _) | Magic (false, _) | Shield (false, _) -> true
+        | Time true | Power (true, _) | Magic (true, _) | Shield (true, _) -> false
+
+    member this.Buff =
+        not this.Debuff
+
     static member same status status2 =
         match (status, status2) with
         | (Poison, Poison) -> true
@@ -143,21 +156,6 @@ type [<CustomEquality; CustomComparison>] StatusType =
         | (Shield (b, b2), Shield (b3, b4)) -> b = b3 && b2 = b4
         | (_, _) -> false
 
-    // TODO: make this a property.
-    static member debuff status =
-        match status with
-        | Poison -> true
-        | Silence -> true
-        | Sleep -> true
-        | Curse -> true
-        | Confuse -> true
-        | Time false | Power (false, _) | Magic (false, _) | Shield (false, _) -> true
-        | Time true | Power (true, _) | Magic (true, _) | Shield (true, _) -> false
-
-    // TODO: make this a property.
-    static member buff status =
-        not (StatusType.debuff status)
-
     static member randomizeWeak (vulnerabilities : Vulnerabilities) status =
         let result0 =
             match status with
@@ -169,7 +167,7 @@ type [<CustomEquality; CustomComparison>] StatusType =
             | Time false | Power (false, _) | Magic (false, _) | Shield (false, _) -> Gen.random1 2 = 0
             | Time true | Power (true, _) | Magic (true, _) | Shield (true, _) -> true
         let result =
-            if StatusType.debuff status then
+            if status.Debuff then
                 match vulnerabilities.TryGetValue (Status status) with
                 | (true, rank) ->
                     match rank with
@@ -191,7 +189,7 @@ type [<CustomEquality; CustomComparison>] StatusType =
             | Time false | Power (false, _) | Magic (false, _) | Shield (false, _) -> Gen.random1 5 <> 0
             | Time true | Power (true, _) | Magic (true, _) | Shield (true, _) -> true
         let result =
-            if StatusType.debuff status then
+            if status.Debuff then
                 match vulnerabilities.TryGetValue (Status status) with
                 | (true, rank) ->
                     match rank with
@@ -271,8 +269,8 @@ type TargetType =
     | VerticalTarget of single * AimType
     | HorizontalTarget of single * AimType
 
-    static member getAimType targetType =
-        match targetType with
+    member this.AimType =
+        match this with
         | SingleTarget aimType -> aimType
         | AllTarget (aimType, _) -> aimType
         | ProximityTarget (_, aimType) -> aimType
@@ -312,7 +310,7 @@ type TechType =
     | Silk
 
     member this.Name =
-        (scstringMemo this).Words
+        (scstringMemo this).Spaced
 
     // TODO: put this in TechData.
     member this.ConjureTech =
@@ -356,7 +354,7 @@ type ArchetypeType =
     | Arachnos
 
     member this.Name =
-        (scstringMemo this).Words
+        (scstringMemo this).Spaced
 
     member this.AttackTouchingArchetype =
         match this with
@@ -396,7 +394,7 @@ type FieldType =
 
     member this.Connector =
         match this with
-        | CastleConnector
+        | CastleConnector -> true
         | _ -> false
 
     static member toFieldName (fieldType : FieldType) =
@@ -529,7 +527,7 @@ type AllyType =
     | Peric
 
     member this.Name =
-        (scstringMemo this).Words
+        (scstringMemo this).Spaced
 
 type EnemyType =
     | DebugGoblin
@@ -548,7 +546,7 @@ type EnemyType =
     | Kyla
 
     member this.Name =
-        (scstringMemo this).Words
+        (scstringMemo this).Spaced
 
 type CharacterType =
     | Ally of AllyType
@@ -858,7 +856,7 @@ type TechData =
       Description : string }
 
     member this.AimType =
-        TargetType.getAimType this.TargetType
+        this.TargetType.AimType
 
 type ArchetypeData =
     { ArchetypeType : ArchetypeType // key
@@ -1113,7 +1111,7 @@ module FieldData =
                     let (probability, rand) = Rand.nextSingleUnder 1.0f rand
                     if probability < Constants.Field.TreasureProbability then
                         let (id, rand) = let (i, rand) = Rand.nextInt rand in let (j, rand) = Rand.nextInt rand in (Gen.idFromInts i j, rand)
-                        let chestType = match fieldData.FieldType with Castle _ -> WoodenChest | _ -> SteelChest
+                        let chestType = WoodenChest
                         let chestSpawned = { chestSpawn with PropData = Chest (chestType, treasure, id, None, CueSystem.Fin, Set.empty) }
 #if DEV
                         let mapSize =
@@ -1170,9 +1168,9 @@ module FieldData =
                     let battleIndex = int (5.0f / distanceFromOriginMax * distanceFromOrigin)
                     match battleIndex with
                     | 0 -> Some WeakSpirit
-                    | 1 -> if Gen.random1 3 <> 0 then Some WeakSpirit else Some NormalSpirit
+                    | 1 -> if Gen.randomb then Some WeakSpirit else Some NormalSpirit
                     | 2 -> Some NormalSpirit
-                    | 3 -> if Gen.random1 3 <> 0 then Some NormalSpirit else Some StrongSpirit
+                    | 3 -> if Gen.randomb then Some NormalSpirit else Some StrongSpirit
                     | _ -> Some StrongSpirit
                 | FieldStatic _ | FieldConnector _ | FieldRoom _ -> None
             | Choice4Of4 _ ->

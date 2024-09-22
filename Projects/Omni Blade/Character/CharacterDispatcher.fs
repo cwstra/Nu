@@ -67,9 +67,13 @@ type CharacterDispatcher () =
          Entity.Elevation == Constants.Battle.ForegroundElevation]
 
     override this.Render (characterPlus, _, entity, world) =
+
+        // render when visible
         let time = characterPlus.UpdateTime
         let character = characterPlus.Character
         if entity.GetVisible world then
+
+            // render character
             let mutable transform = entity.GetTransform world
             let perimeter = transform.Perimeter
             World.enqueueLayeredOperation2d
@@ -86,6 +90,8 @@ type CharacterDispatcher () =
                           Emission = Character.getAnimationEmission time character
                           Flip = FlipNone }}
                 world
+
+            // render affliction (if any)
             match getAfflictionInsetOpt time character with
             | Some afflictionInset ->
                 let afflictionImage = Assets.Battle.AfflictionsAnimationSheet
@@ -96,7 +102,7 @@ type CharacterDispatcher () =
                     | LargeStature ->
                         perimeter.Min + perimeter.Size - Constants.Battle.AfflictionSize.MapY((*) 0.5f)
                     | BossStature ->
-                        perimeter.Min + perimeter.Size - Constants.Battle.AfflictionSize.MapX((*) 2.0f).MapY((*) 1.75f)
+                    perimeter.Min + perimeter.Size - Constants.Battle.AfflictionSize.MapX((*) 2.0f).MapY((*) 1.75f)
                 let mutable afflictionTransform = Transform.makeDefault false
                 afflictionTransform.Position <- afflictionPosition
                 afflictionTransform.Size <- Constants.Battle.AfflictionSize
@@ -116,6 +122,8 @@ type CharacterDispatcher () =
                               Flip = FlipNone }}
                     world
             | None -> ()
+
+            // render orb (if any)
             match getChargeOrbInsetOpt time character with
             | Some chargeOrbInset ->
                 let chargeOrbImage = Assets.Battle.ChargeOrbAnimationSheet
@@ -126,7 +134,7 @@ type CharacterDispatcher () =
                     | LargeStature ->
                         perimeter.Min + perimeter.Size - Constants.Battle.ChargeOrbSize.MapX((*) 1.5f).MapY((*) 0.5f)
                     | BossStature ->
-                        perimeter.Min + perimeter.Size - Constants.Battle.ChargeOrbSize.MapX((*) 2.5f).MapY((*) 1.75f)
+                    perimeter.Min + perimeter.Size - Constants.Battle.ChargeOrbSize.MapX((*) 2.5f).MapY((*) 1.75f)
                 let mutable chargeOrbTransform = Transform.makeDefault false
                 chargeOrbTransform.Position <- chargeOrbPosition
                 chargeOrbTransform.Size <- Constants.Battle.ChargeOrbSize

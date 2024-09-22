@@ -205,6 +205,7 @@ module WorldModule3 =
         static member updateLateBindings (assemblies : Assembly array) world =
             Content.UpdateLateBindingsCount <- inc Content.UpdateLateBindingsCount
             World.clearClipboard world // HACK: clear what's on the clipboard rather than changing its dispatcher instance.
+            world.WorldExtension.Plugin.CleanUp ()
             let pluginType =
                 assemblies |>
                 Array.map (fun assembly -> assembly.GetTypes ()) |>
@@ -297,7 +298,7 @@ module WorldModule3 =
             // make the world's event delegate
             let eventGraph =
                 let eventTracing = Constants.Engine.EventTracing
-                let eventTracerOpt = if eventTracing then Some (Log.remark "Event") else None // NOTE: lambda expression is duplicated in multiple places...
+                let eventTracerOpt = if eventTracing then Some (Log.custom "Event") else None // NOTE: lambda expression is duplicated in multiple places...
                 let eventFilter = Constants.Engine.EventFilter
                 let globalSimulantGeneralized = { GsgAddress = atoa Game.GameAddress }
                 let eventConfig = if config.Imperative then Imperative else Functional
@@ -359,7 +360,7 @@ module WorldModule3 =
                 // make the world's event graph
                 let eventGraph =
                     let eventTracing = Constants.Engine.EventTracing
-                    let eventTracerOpt = if eventTracing then Some (Log.remark "Event") else None
+                    let eventTracerOpt = if eventTracing then Some (Log.custom "Event") else None
                     let eventFilter = Constants.Engine.EventFilter
                     let globalSimulant = Game
                     let globalSimulantGeneralized = { GsgAddress = atoa globalSimulant.GameAddress }
@@ -448,11 +449,16 @@ module WorldModule3 =
 
         /// Run the game engine, initializing dependencies as indicated by WorldConfig, and returning exit code upon
         /// termination.
-        static member run worldConfig plugin =
+        static member runPlus runWhile preProcess perProcess postProcess imGuiProcess imGuiPostProcess worldConfig plugin =
             match SdlDeps.tryMake worldConfig.SdlConfig with
             | Right sdlDeps ->
                 use sdlDeps = sdlDeps // bind explicitly to dispose automatically
                 match World.tryMake sdlDeps worldConfig plugin with
-                | Right world -> World.runWithCleanUp tautology id id id id id Live true world
-                | Left error -> Log.trace error; Constants.Engine.ExitCodeFailure
-            | Left error -> Log.trace error; Constants.Engine.ExitCodeFailure
+                | Right world -> World.runWithCleanUp runWhile preProcess perProcess postProcess imGuiProcess imGuiPostProcess Live true world
+                | Left error -> Log.error error; Constants.Engine.ExitCodeFailure
+            | Left error -> Log.error error; Constants.Engine.ExitCodeFailure
+
+        /// Run the game engine, initializing dependencies as indicated by WorldConfig, and returning exit code upon
+        /// termination.
+        static member run worldConfig plugin =
+            World.runPlus tautology id id id id id worldConfig plugin

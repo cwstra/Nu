@@ -36,6 +36,8 @@ type OmniBladeCommand =
     | FromFieldToBattle of BattleData * PrizePool
     | FromBattleToField of PrizePool
     | ConcludeCredits
+    | SynchronizeSongVolume
+    | ResetSongVolume
     | Exit
     interface Command
 
@@ -48,6 +50,11 @@ module OmniBladeExtensions =
 
 type OmniBladeDispatcher () =
     inherit GameDispatcher<OmniBlade, OmniBladeMessage, OmniBladeCommand> (Splash)
+
+    override this.Register (game, world) =
+        let world = base.Register (game, world)
+        World.setMasterSongVolume Constants.Gameplay.SongVolumeDefault world
+        world
 
     override this.Definitions (omniBlade, _) =
         [Game.DesiredScreen :=
@@ -78,6 +85,8 @@ type OmniBladeDispatcher () =
          Simulants.Field.QuitFieldEvent => ShowTitle
          Simulants.Field.CommencingBattleEvent => CommencingBattle
          Simulants.Field.CommenceBattleEvent =|> fun evt -> CommenceBattle evt.Data
+         Simulants.Field.SelectEvent => SynchronizeSongVolume
+         Simulants.Title.SelectEvent => ResetSongVolume
          Simulants.Battle.ConcludingBattleEvent =|> fun evt -> ConcludingBattle evt.Data
          Simulants.Battle.ConcludeBattleEvent => ConcludeBattle]
 
@@ -99,18 +108,18 @@ type OmniBladeDispatcher () =
         | ShowFieldInitial ->
             let slot = match omniBlade with Intro slot -> slot | _ -> Slot1
             let field = Field.initial world.UpdateTime slot
-            withSignal (SetField field) Field
+            withSignals [SetField field; SynchronizeSongVolume] Field
 
         | TryLoad saveSlot ->
             match Field.tryLoad world.UpdateTime saveSlot with
-            | Some loaded -> withSignal (SetField loaded) Field
+            | Some field -> withSignals [SetField field; SynchronizeSongVolume] Field
             | None -> just omniBlade
 
         | CommencingBattle ->
             just Battle
 
         | CommenceBattle (battleData, prizePool) ->
-            withSignal (FromFieldToBattle (battleData, prizePool)) Battle
+            withSignal (FromFieldToBattle (battleData, prizePool)) Battle    
 
         | ConcludingBattle outcome ->
             if outcome
@@ -172,6 +181,15 @@ type OmniBladeDispatcher () =
 
         | ConcludeCredits ->
             let world = Simulants.Credits.SetCredits (Credits.make true) world
+            just world
+
+        | SynchronizeSongVolume ->
+            let field = Simulants.Field.GetField world
+            World.setMasterSongVolume field.Options.SongVolume world
+            just world
+
+        | ResetSongVolume ->
+            World.setMasterSongVolume Constants.Gameplay.SongVolumeDefault world
             just world
 
         | Exit ->

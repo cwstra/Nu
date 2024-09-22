@@ -169,7 +169,7 @@ module WorldModule2 =
                         let world = World.publishPlus () selectedScreen.IncomingStartEvent eventTrace selectedScreen false false world
                         match (selectedScreen.GetIncoming world).SongOpt with
                         | Some playSong ->
-                            match World.getCurrentSongOpt world with
+                            match World.getSongOpt world with
                             | Some song when assetEq song.Song playSong.Song -> () // do nothing when song is the same
                             | _ -> World.playSong playSong.FadeInTime playSong.FadeOutTime GameTime.zero playSong.RepeatLimitOpt playSong.Volume playSong.Song world // play song when song is different
                         | None -> ()
@@ -191,7 +191,7 @@ module WorldModule2 =
                 if world.Accompanied && world.Halted then // special case to play song when halted in editor
                     match (selectedScreen.GetIncoming world).SongOpt with
                     | Some playSong ->
-                        match World.getCurrentSongOpt world with
+                        match World.getSongOpt world with
                         | Some song when assetEq song.Song playSong.Song -> () // do nothing when song is the same
                         | _ -> World.playSong playSong.FadeInTime playSong.FadeOutTime GameTime.zero playSong.RepeatLimitOpt playSong.Volume playSong.Song world // play song when song is different
                     | None -> ()
@@ -310,6 +310,27 @@ module WorldModule2 =
                     | Dead -> world
                 else world
             | Dead -> world
+
+        static member private updateScreenRequestedSong world =
+            match World.getSelectedScreenOpt world with
+            | Some selectedScreen ->
+                match World.getScreenRequestedSong selectedScreen world with
+                | Request song ->
+                    match World.getSongOpt world with
+                    | Some current ->
+                        if  current.FadeInTime <> song.FadeInTime ||
+                            current.FadeOutTime <> song.FadeOutTime ||
+                            current.StartTime <> song.StartTime ||
+                            current.RepeatLimitOpt <> song.RepeatLimitOpt ||
+                            assetNeq current.Song song.Song then
+                            World.playSong song.FadeInTime song.FadeOutTime song.StartTime song.RepeatLimitOpt song.Volume song.Song world
+                        elif current.Volume <> song.Volume then
+                            World.setSongVolume song.Volume world
+                    | None -> World.playSong song.FadeInTime song.FadeOutTime song.StartTime song.RepeatLimitOpt song.Volume song.Song world
+                | RequestFadeOut fadeOutTime -> if not (World.getSongFadingOut world) then World.fadeOutSong fadeOutTime world
+                | RequestNone -> World.stopSong world
+                | RequestIgnore -> ()
+            | None -> ()
 
         static member private updateScreenTransition world =
             match World.getSelectedScreenOpt world with
@@ -645,7 +666,7 @@ module WorldModule2 =
 #if DEBUG
                         if  Array.contains Address.WildcardName eventNames ||
                             Array.contains Address.EllipsisName eventNames then
-                            Log.debug
+                            Log.error
                                 ("Subscribing to entity update events with a wildcard or ellipsis is not supported. " +
                                  "This will cause a bug where some entity update events are not published.")
 #endif
@@ -690,7 +711,7 @@ module WorldModule2 =
                             else world
                         if  Array.contains Address.WildcardName eventNames ||
                             Array.contains Address.EllipsisName eventNames then
-                            Log.debug "Subscribing to change events with a wildcard or ellipsis is not supported."
+                            Log.error "Subscribing to change events with a wildcard or ellipsis is not supported."
                         world
                     | _ -> world
                 else world
@@ -1235,12 +1256,12 @@ module WorldModule2 =
 
             // pre-update screen if any
             world.Timers.PreUpdateScreensTimer.Restart ()
-            let world = Option.fold (fun world screen -> if advancing then World.preUpdateScreen screen world else world) world screenOpt
+            let world = Option.fold (fun world (screen : Screen) -> if advancing && screen.GetExists world then World.preUpdateScreen screen world else world) world screenOpt
             world.Timers.PreUpdateScreensTimer.Stop ()
 
             // pre-update groups
             world.Timers.PreUpdateGroupsTimer.Restart ()
-            let world = Seq.fold (fun world group -> if advancing then World.preUpdateGroup group world else world) world groups
+            let world = Seq.fold (fun world (group : Group) -> if advancing && group.GetExists world then World.preUpdateGroup group world else world) world groups
             world.Timers.PreUpdateGroupsTimer.Stop ()
 
             // fin
@@ -1265,28 +1286,28 @@ module WorldModule2 =
                 world.Timers.UpdateGameTimer.Restart ()
                 let world = if advancing then World.updateGame game world else world
                 world.Timers.UpdateGameTimer.Stop ()
-            
+
                 // update screen if any
                 world.Timers.UpdateScreensTimer.Restart ()
-                let world = Option.fold (fun world screen -> if advancing then World.updateScreen screen world else world) world screenOpt
+                let world = Option.fold (fun world (screen : Screen) -> if advancing && screen.GetExists world then World.updateScreen screen world else world) world screenOpt
                 world.Timers.UpdateScreensTimer.Stop ()
 
                 // update groups
                 world.Timers.UpdateGroupsTimer.Restart ()
-                let world = Seq.fold (fun world group -> if advancing then World.updateGroup group world else world) world groups
+                let world = Seq.fold (fun world (group : Group) -> if advancing && group.GetExists world then World.updateGroup group world else world) world groups
                 world.Timers.UpdateGroupsTimer.Stop ()
 
                 // update entities
                 world.Timers.UpdateEntitiesTimer.Restart ()
                 let world =
                     Seq.fold (fun world (element : Entity Octelement) ->
-                        if element.Entry.GetAlwaysUpdate world || advancing && not (element.Entry.GetStatic world)
+                        if element.Entry.GetExists world && (advancing && not (element.Entry.GetStatic world) || element.Entry.GetAlwaysUpdate world)
                         then World.updateEntity element.Entry world
                         else world)
                         world HashSet3dNormalCached
                 let world =
                     Seq.fold (fun world (element : Entity Quadelement) ->
-                        if element.Entry.GetAlwaysUpdate world || advancing && not (element.Entry.GetStatic world)
+                        if element.Entry.GetExists world && (advancing && not (element.Entry.GetStatic world) || element.Entry.GetAlwaysUpdate world)
                         then World.updateEntity element.Entry world
                         else world)
                         world HashSet2dNormalCached
@@ -1317,12 +1338,12 @@ module WorldModule2 =
 
             // post-update screen if any
             world.Timers.PostUpdateScreensTimer.Restart ()
-            let world = Option.fold (fun world screen -> if advancing then World.postUpdateScreen screen world else world) world screenOpt
+            let world = Option.fold (fun world (screen : Screen) -> if advancing && screen.GetExists world then World.postUpdateScreen screen world else world) world screenOpt
             world.Timers.PostUpdateScreensTimer.Stop ()
 
             // post-update groups
             world.Timers.PostUpdateGroupsTimer.Restart ()
-            let world = Seq.fold (fun world group -> if advancing then World.postUpdateGroup group world else world) world groups
+            let world = Seq.fold (fun world (group : Group) -> if advancing && group.GetExists world then World.postUpdateGroup group world else world) world groups
             world.Timers.PostUpdateGroupsTimer.Stop ()
 
             // fin
@@ -1577,6 +1598,7 @@ module WorldModule2 =
             world.JobGraph.CleanUp ()
             let world = World.unregisterGame Nu.Game.Handle world
             World.cleanUpSubsystems world |> ignore
+            world.WorldExtension.Plugin.CleanUp ()
 
         /// Run the game engine with the given handlers, but don't clean up at the end, and return the world.
         static member runWithoutCleanUp runWhile preProcess perProcess postProcess imGuiProcess imGuiPostProcess liveness firstFrame (world : World) =
@@ -1597,6 +1619,9 @@ module WorldModule2 =
                     let world = World.updateScreenTransition world
                     match World.getLiveness world with
                     | Live ->
+
+                        // 
+                        World.updateScreenRequestedSong world
 
                         // process HID inputs
                         world.Timers.InputTimer.Restart ()
@@ -1698,7 +1723,8 @@ module WorldModule2 =
                                                                         // automatically enable frame pacing when need is detected
                                                                         let world =
                                                                             if not world.FramePacing then
-                                                                                if world.Timers.MainThreadTimer.Elapsed.TotalSeconds < Constants.GameTime.DesiredFrameTimeMinimum * 0.9 then FramePaceIssues <- inc FramePaceIssues
+                                                                                let frameTimeMinimum = GameTime.DesiredFrameTimeMinimum
+                                                                                if world.Timers.MainThreadTimer.Elapsed.TotalSeconds < frameTimeMinimum * 0.9 then FramePaceIssues <- inc FramePaceIssues
                                                                                 FramePaceChecks <- inc FramePaceChecks
                                                                                 let world = if FramePaceIssues = 15 then World.setFramePacing true world else world
                                                                                 if FramePaceChecks % 30 = 0 then FramePaceIssues <- 0
@@ -1707,8 +1733,9 @@ module WorldModule2 =
 
                                                                         // pace frame when enabled
                                                                         if world.FramePacing then
-                                                                            while world.Timers.MainThreadTimer.Elapsed.TotalSeconds < Constants.GameTime.DesiredFrameTimeMinimum do
-                                                                                let timeToSleep = Constants.GameTime.DesiredFrameTimeMinimum - world.Timers.MainThreadTimer.Elapsed.TotalSeconds
+                                                                            let frameTimeMinimum = GameTime.DesiredFrameTimeMinimum
+                                                                            while world.Timers.MainThreadTimer.Elapsed.TotalSeconds < frameTimeMinimum do
+                                                                                let timeToSleep = frameTimeMinimum - world.Timers.MainThreadTimer.Elapsed.TotalSeconds
                                                                                 if timeToSleep > 0.008 then Thread.Sleep 7
                                                                                 elif timeToSleep > 0.004 then Thread.Sleep 3
                                                                                 elif timeToSleep > 0.002 then Thread.Sleep 1
@@ -1798,7 +1825,7 @@ module WorldModule2 =
                 Constants.Engine.ExitCodeSuccess
             with exn ->
                 let world = World.switch world
-                Log.trace (scstring exn)
+                Log.error (scstring exn)
                 World.cleanUp world
                 Constants.Engine.ExitCodeFailure
 
@@ -1854,7 +1881,7 @@ module EntityDispatcherModule2 =
                         property.DesignerValue <- model
                         model
                     with _ ->
-                        Log.debugOnce "Could not convert existing entity model to new type. Falling back on initial model value."
+                        Log.warnOnce "Could not convert existing entity model to new type. Falling back on initial model value."
                         makeInitial world
             World.setEntityModelGeneric<'model> true model entity world |> snd'
 
@@ -1885,7 +1912,7 @@ module EntityDispatcherModule2 =
                     try let command = signalObj |> valueToSymbol |> symbolToValue : 'command
                         World.signalEntity<'model, 'message, 'command> command entity world
                     with _ ->
-                        Log.debugOnce
+                        Log.errorOnce
                             ("Incompatible signal type received by entity (signal = '" + scstring signalObj + "'; entity = '" + scstring entity + "').\n" +
                              "This may come about due to sending an incorrect signal type to the entity or due to too significant a change in the signal type when reloading code.")
                         world
@@ -2177,7 +2204,7 @@ module GroupDispatcherModule =
                         property.DesignerValue <- model
                         model
                     with _ ->
-                        Log.debugOnce "Could not convert existing group model to new type. Falling back on initial model value."
+                        Log.warnOnce "Could not convert existing group model to new type. Falling back on initial model value."
                         makeInitial world
             World.setGroupModelGeneric<'model> true model group world |> snd'
 
@@ -2202,7 +2229,7 @@ module GroupDispatcherModule =
                     try let command = signalObj |> valueToSymbol |> symbolToValue : 'command
                         World.signalGroup<'model, 'message, 'command> command group world
                     with _ ->
-                        Log.debugOnce
+                        Log.errorOnce
                             ("Incompatible signal type received by group (signal = '" + scstring signalObj + "'; group = '" + scstring group + "').\n" +
                              "This may come about due to sending an incorrect signal type to the group or due to too significant a change in the signal type when reloading code.")
                         world
@@ -2360,7 +2387,7 @@ module ScreenDispatcherModule =
                         property.DesignerValue <- model
                         model
                     with _ ->
-                        Log.debugOnce "Could not convert existing screen model to new type. Falling back on initial model value."
+                        Log.warnOnce "Could not convert existing screen model to new type. Falling back on initial model value."
                         makeInitial world
             World.setScreenModelGeneric<'model> true model screen world |> snd'
 
@@ -2385,7 +2412,7 @@ module ScreenDispatcherModule =
                     try let command = signalObj |> valueToSymbol |> symbolToValue : 'command
                         World.signalScreen<'model, 'message, 'command> command screen world
                     with _ ->
-                        Log.debugOnce
+                        Log.errorOnce
                             ("Incompatible signal type received by screen (signal = '" + scstring signalObj + "'; screen = '" + scstring screen + "').\n" +
                              "This may come about due to sending an incorrect signal type to the screen or due to too significant a change in the signal type when reloading code.")
                         world
@@ -2550,7 +2577,7 @@ module GameDispatcherModule =
                         property.DesignerValue <- model
                         model
                     with _ ->
-                        Log.debugOnce "Could not convert existing game model to new type. Falling back on initial model value."
+                        Log.warnOnce "Could not convert existing game model to new type. Falling back on initial model value."
                         makeInitial world
             World.setGameModelGeneric<'model> true model game world |> snd'
 
@@ -2575,7 +2602,7 @@ module GameDispatcherModule =
                     try let command = signalObj |> valueToSymbol |> symbolToValue : 'command
                         World.signalGame<'model, 'message, 'command> command game world
                     with _ ->
-                        Log.debugOnce
+                        Log.errorOnce
                             ("Incompatible signal type received by game (signal = '" + scstring signalObj + "'; game = '" + scstring game + "').\n" +
                              "This may come about due to sending an incorrect signal type to the game or due to too significant a change in the signal type when reloading code.")
                         world

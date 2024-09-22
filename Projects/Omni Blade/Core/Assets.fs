@@ -53,6 +53,8 @@ module Assets =
         let ButtonLongDownImage = asset<Image> PackageName "ButtonLongDown"
         let ButtonSquishedUpImage = asset<Image> PackageName "ButtonSquishedUp"
         let ButtonSquishedDownImage = asset<Image> PackageName "ButtonSquishedDown"
+        let ButtonTinyUpImage = asset<Image> PackageName "ButtonTinyUp"
+        let ButtonTinyDownImage = asset<Image> PackageName "ButtonTinyDown"
         let ButtonShortUpImage = asset<Image> PackageName "ButtonShortUp"
         let ButtonShortDownImage = asset<Image> PackageName "ButtonShortDown"
         let HealthBorderImage = asset<Image> PackageName "HealthBorder"
@@ -61,7 +63,7 @@ module Assets =
         let MistakeSound = asset<Sound> PackageName "Mistake"
         let SlotSound = asset<Sound> PackageName "Slot"
         let TitleSong = { FadeInTime = 0L; FadeOutTime = Constants.Audio.FadeOutTimeDefault; StartTime = 0L; RepeatLimitOpt = None; Volume = Constants.Audio.SongVolumeDefault; Song = asset<Song> PackageName "Title" }
-        let CreditsSong = { FadeInTime = 0L; FadeOutTime = 0L; StartTime = 0L; RepeatLimitOpt = Some 0u; Volume = Constants.Audio.SongVolumeDefault; Song = asset<Song> PackageName "Credits" }
+        let CreditsSong = { FadeInTime = 0L; FadeOutTime = Constants.Audio.FadeOutTimeDefault; StartTime = 0L; RepeatLimitOpt = Some 0u; Volume = Constants.Audio.SongVolumeDefault; Song = asset<Song> PackageName "Credits" }
         let IntroSong = { FadeInTime = 0L; FadeOutTime = 90L; StartTime = 0L; RepeatLimitOpt = None; Volume = Constants.Audio.SongVolumeDefault; Song = asset<Song> PackageName "Intro" }
         let TitleGroupFilePath = "Assets/Gui/Groups/Title.nugroup"
         let PickGroupFilePath = "Assets/Gui/Groups/Pick.nugroup"

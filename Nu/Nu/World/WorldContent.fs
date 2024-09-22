@@ -320,7 +320,7 @@ module Content =
                         let world =
                             if not (group.GetExists world) || group.GetDestroying world then
                                 match groupContent.GroupFilePathOpt with
-                                | Some groupFilePath -> World.readGroupFromFile groupFilePath None screen world |> snd
+                                | Some groupFilePath -> World.readGroupFromFile groupFilePath (Some group.Name) screen world |> snd
                                 | None -> World.createGroup4 groupContent.GroupDispatcherName (Some group.Name) group.Screen world |> snd
                             else world
                         let world = World.setGroupProtected true group world |> snd'
@@ -360,15 +360,15 @@ module Content =
         else (content.InitialScreenNameOpt |> Option.map (fun name -> Nu.Game.Handle / name), world)
 
     /// Describe an entity with the given dispatcher type and definitions as well as its contained entities.
-    let private composite4<'entityDispatcher when 'entityDispatcher :> EntityDispatcher> entityName entityFilePathOpt definitions entities =
+    let private composite4<'entityDispatcher when 'entityDispatcher :> EntityDispatcher> entityName entityFilePathOpt (definitions : Entity DefinitionContent seq) entities =
         let mutable eventSignalContentsOpt = null
         let mutable eventHandlerContentsOpt = null
         let mutable propertyContentsOpt = null
         let mutable entityContentsOpt = null
         for definition in definitions do
             match definition with
-            | EventSignalContent (addr, value) -> (if isNull eventSignalContentsOpt then eventSignalContentsOpt <- OrderedDictionary HashIdentity.Structural); eventSignalContentsOpt.Add ((addr, value), makeGuid ())
-            | EventHandlerContent ehf -> (if isNull eventHandlerContentsOpt then eventHandlerContentsOpt <- OrderedDictionary HashIdentity.Structural); eventHandlerContentsOpt.Add ((UpdateLateBindingsCount, ehf.Equatable), (makeGuid (), ehf.Nonequatable))
+            | EventSignalContent (addr, value) -> (if isNull eventSignalContentsOpt then eventSignalContentsOpt <- OrderedDictionary HashIdentity.Structural); eventSignalContentsOpt.Add ((addr, value), Gen.id64)
+            | EventHandlerContent ehf -> (if isNull eventHandlerContentsOpt then eventHandlerContentsOpt <- OrderedDictionary HashIdentity.Structural); eventHandlerContentsOpt.Add ((UpdateLateBindingsCount, ehf.Equatable), (Gen.id64, ehf.Nonequatable))
             | PropertyContent pc -> (if isNull propertyContentsOpt then propertyContentsOpt <- List ()); propertyContentsOpt.Add pc
         for entity in entities do
             if isNull entityContentsOpt then entityContentsOpt <- OrderedDictionary StringComparer.Ordinal
@@ -518,15 +518,15 @@ module Content =
     let rigidModelHierarchy entityName definitions = entity<RigidModelHierarchyDispatcher> entityName definitions
 
     /// Describe a group with the given dispatcher type and definitions as well as its contained entities.
-    let private group4<'groupDispatcher when 'groupDispatcher :> GroupDispatcher> groupName groupFilePathOpt definitions entities =
+    let private group4<'groupDispatcher when 'groupDispatcher :> GroupDispatcher> groupName groupFilePathOpt (definitions : Group DefinitionContent seq)  entities =
         let mutable eventSignalContentsOpt = null
         let mutable eventHandlerContentsOpt = null
         let mutable propertyContentsOpt = null
         let mutable entityContentsOpt = null
         for definition in definitions do
             match definition with
-            | EventSignalContent (addr, value) -> (if isNull eventSignalContentsOpt then eventSignalContentsOpt <- OrderedDictionary HashIdentity.Structural); eventSignalContentsOpt.Add ((addr, value), makeGuid ())
-            | EventHandlerContent ehf -> (if isNull eventHandlerContentsOpt then eventHandlerContentsOpt <- OrderedDictionary HashIdentity.Structural); eventHandlerContentsOpt.Add ((UpdateLateBindingsCount, ehf.Equatable), (makeGuid (), ehf.Nonequatable))
+            | EventSignalContent (addr, value) -> (if isNull eventSignalContentsOpt then eventSignalContentsOpt <- OrderedDictionary HashIdentity.Structural); eventSignalContentsOpt.Add ((addr, value), Gen.id64)
+            | EventHandlerContent ehf -> (if isNull eventHandlerContentsOpt then eventHandlerContentsOpt <- OrderedDictionary HashIdentity.Structural); eventHandlerContentsOpt.Add ((UpdateLateBindingsCount, ehf.Equatable), (Gen.id64, ehf.Nonequatable))
             | PropertyContent pc -> (if isNull propertyContentsOpt then propertyContentsOpt <- List ()); propertyContentsOpt.Add pc
         for entity in entities do
             if isNull entityContentsOpt then entityContentsOpt <- OrderedDictionary StringComparer.Ordinal
@@ -548,15 +548,15 @@ module Content =
         group4<'groupDispatcher> groupName (Some filePath) definitions entities
 
     /// Describe a screen with the given dispatcher type and definitions as well as its contained simulants.
-    let private screen5<'screenDispatcher when 'screenDispatcher :> ScreenDispatcher> screenName screenBehavior groupFilePathOpt definitions groups =
+    let private screen5<'screenDispatcher when 'screenDispatcher :> ScreenDispatcher> screenName screenBehavior groupFilePathOpt (definitions : Screen DefinitionContent seq)  groups =
         let mutable eventSignalContentsOpt = null
         let mutable eventHandlerContentsOpt = null
         let mutable propertyContentsOpt = null
         let groupContents = OrderedDictionary StringComparer.Ordinal
         for definition in definitions do
             match definition with
-            | EventSignalContent (addr, value) -> (if isNull eventSignalContentsOpt then eventSignalContentsOpt <- OrderedDictionary HashIdentity.Structural); eventSignalContentsOpt.Add ((addr, value), makeGuid ())
-            | EventHandlerContent ehf -> (if isNull eventHandlerContentsOpt then eventHandlerContentsOpt <- OrderedDictionary HashIdentity.Structural); eventHandlerContentsOpt.Add ((UpdateLateBindingsCount, ehf.Equatable), (makeGuid (), ehf.Nonequatable))
+            | EventSignalContent (addr, value) -> (if isNull eventSignalContentsOpt then eventSignalContentsOpt <- OrderedDictionary HashIdentity.Structural); eventSignalContentsOpt.Add ((addr, value), Gen.id64)
+            | EventHandlerContent ehf -> (if isNull eventHandlerContentsOpt then eventHandlerContentsOpt <- OrderedDictionary HashIdentity.Structural); eventHandlerContentsOpt.Add ((UpdateLateBindingsCount, ehf.Equatable), (Gen.id64, ehf.Nonequatable))
             | PropertyContent pc -> (if isNull propertyContentsOpt then propertyContentsOpt <- List ()); propertyContentsOpt.Add pc
         for group in groups do
             groupContents.Add (group.GroupName, group)
@@ -586,8 +586,8 @@ module Content =
         let screenContents = OrderedDictionary StringComparer.Ordinal
         for definition in definitions do
             match definition with
-            | EventSignalContent (addr, value) -> (if isNull eventSignalContentsOpt then eventSignalContentsOpt <- OrderedDictionary HashIdentity.Structural); eventSignalContentsOpt.Add ((addr, value), makeGuid ())
-            | EventHandlerContent ehf -> (if isNull eventHandlerContentsOpt then eventHandlerContentsOpt <- OrderedDictionary HashIdentity.Structural); eventHandlerContentsOpt.Add ((UpdateLateBindingsCount, ehf.Equatable), (makeGuid (), ehf.Nonequatable))
+            | EventSignalContent (addr, value) -> (if isNull eventSignalContentsOpt then eventSignalContentsOpt <- OrderedDictionary HashIdentity.Structural); eventSignalContentsOpt.Add ((addr, value), Gen.id64)
+            | EventHandlerContent ehf -> (if isNull eventHandlerContentsOpt then eventHandlerContentsOpt <- OrderedDictionary HashIdentity.Structural); eventHandlerContentsOpt.Add ((UpdateLateBindingsCount, ehf.Equatable), (Gen.id64, ehf.Nonequatable))
             | PropertyContent pc -> (if isNull propertyContentsOpt then propertyContentsOpt <- List ()); propertyContentsOpt.Add pc
         for screen in screens do
             screenContents.Add (screen.ScreenName, screen)
@@ -620,7 +620,7 @@ module ContentOperators =
 #if !DEBUG
         inline
 #endif
-        (==) (lens : Lens<'a, 's>) (value : 'a) : DefinitionContent =
+        (==) (lens : Lens<'a, 's>) (value : 'a) : 's DefinitionContent =
         PropertyContent (PropertyContent.make true lens value)
 
     /// Define a synchronized property equality.
@@ -628,7 +628,7 @@ module ContentOperators =
 #if !DEBUG
         inline
 #endif
-        (:=) (lens : Lens<'a, 's>) (value : 'a) : DefinitionContent =
+        (:=) (lens : Lens<'a, 's>) (value : 'a) : 's DefinitionContent =
         PropertyContent (PropertyContent.make false lens value)
 
     /// Define an event signal.
@@ -636,7 +636,7 @@ module ContentOperators =
 #if !DEBUG
         inline
 #endif
-        (=>) (eventAddress : 'a Address) (signal : Signal) : DefinitionContent =
+        (=>) (eventAddress : 'a Address) (signal : Signal) : 's DefinitionContent =
         EventSignalContent (Address.generalize eventAddress, signal)
 
     /// Define an event handler.
@@ -644,5 +644,5 @@ module ContentOperators =
 #if !DEBUG
         inline
 #endif
-        (=|>) (eventAddress : 'a Address) (callback : Event<'a, 's> -> Signal) : DefinitionContent =
+        (=|>) (eventAddress : 'a Address) (callback : Event<'a, 's> -> Signal) : 's DefinitionContent =
         EventHandlerContent (PartialEquatable.make (Address.generalize eventAddress) (fun (evt : Event) -> callback (Event.specialize evt) :> obj))

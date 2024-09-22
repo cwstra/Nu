@@ -39,8 +39,6 @@ module Override =
                 | nameof OpenGL.HlAssert -> OpenGL.HlAssert <- scvalue value
                 | nameof Engine.RunSynchronously -> Engine.RunSynchronously <- scvalue value
                 | nameof Engine.Meter2d -> Engine.Meter2d <- scvalue value
-                | nameof Engine.Entity2dPerimeterCenteredDefault -> Engine.Entity2dPerimeterCenteredDefault <- scvalue value
-                | nameof Engine.EntityGuiPerimeterCenteredDefault -> Engine.EntityGuiPerimeterCenteredDefault <- scvalue value
                 | nameof Engine.QuadnodeSize -> Engine.QuadnodeSize <- scvalue value
                 | nameof Engine.QuadtreeDepth -> Engine.QuadtreeDepth <- scvalue value
                 | nameof Engine.OctnodeSize -> Engine.OctnodeSize <- scvalue value
@@ -63,6 +61,7 @@ module Override =
                 | nameof Render.ShadowDetailedCount -> Render.ShadowDetailedResolutionScalar <- scvalue value
                 | nameof Render.ShadowDetailedResolutionScalar -> Render.ShadowDetailedResolutionScalar <- scvalue value
                 | nameof Render.ShadowsMax -> Render.ShadowsMax <- min (scvalue value) Constants.Render.ShadowsMaxShader
+                | nameof Gui.SliceMarginDefault -> Gui.SliceMarginDefault <- scvalue value
                 | _ -> ()
             Constants.Render.NearPlaneDistanceOmnipresent <- Constants.Render.NearPlaneDistanceInterior
             Constants.Render.FarPlaneDistanceOmnipresent <- Constants.Render.FarPlaneDistanceImposter

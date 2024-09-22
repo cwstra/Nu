@@ -5,9 +5,12 @@ open Prime
 open Nu
 
 type CharacterMessage =
-    | WeaponCollide of BodyCollisionData
-    | WeaponSeparateExplicit of BodySeparationExplicitData
-    | WeaponSeparateImplicit of BodySeparationImplicitData
+    | CharacterPenetration of BodyPenetrationData
+    | CharacterSeparationExplicit of BodySeparationExplicitData
+    | CharacterSeparationImplicit of BodySeparationImplicitData
+    | WeaponPenetration of BodyPenetrationData
+    | WeaponSeparationExplicit of BodySeparationExplicitData
+    | WeaponSeparationImplicit of BodySeparationImplicitData
     | UpdateInputKey of KeyboardKeyData
     | Update
     interface Message
@@ -44,33 +47,15 @@ type CharacterDispatcher (character : Character) =
          Entity.SleepingAllowed == true
          Entity.CharacterProperties == character.CharacterProperties
          Entity.BodyShape == CapsuleShape { Height = 1.0f; Radius = 0.35f; TransformOpt = Some (Affine.makeTranslation (v3 0.0f 0.85f 0.0f)); PropertiesOpt = None }
+         Entity.Observable == true
          Entity.FollowTargetOpt := match character.CharacterType with Enemy -> Some Simulants.GameplayPlayer | Player -> None
          Entity.RegisterEvent => Register
          Game.KeyboardKeyDownEvent =|> fun evt -> UpdateInputKey evt.Data
          Entity.UpdateEvent => Update
+         Entity.BodyPenetrationEvent =|> fun evt -> CharacterPenetration evt.Data
+         Entity.BodySeparationExplicitEvent =|> fun evt -> CharacterSeparationExplicit evt.Data
+         Entity.BodySeparationImplicitEvent =|> fun evt -> CharacterSeparationImplicit evt.Data
          Game.PostUpdateEvent => SyncWeaponTransform]
-
-    override this.Content (character, _) =
-
-        [// animated model
-         Content.entity<AnimatedModelDispatcher> Constants.Gameplay.CharacterAnimatedModelName
-            [Entity.Size == v3Dup 2.0f
-             Entity.Offset == v3 0.0f 1.0f 0.0f
-             Entity.MaterialProperties == MaterialProperties.defaultProperties
-             Entity.AnimatedModel == Assets.Gameplay.JoanModel]
-
-         // weapon
-         Content.entity<RigidModelDispatcher> Constants.Gameplay.CharacterWeaponName
-            [Entity.Offset == v3 0.0f 0.5f 0.0f
-             Entity.StaticModel == character.WeaponModel
-             Entity.BodyType == Static
-             Entity.BodyShape == BoxShape { Size = v3 0.3f 1.2f 0.3f; TransformOpt = Some (Affine.makeTranslation (v3 0.0f 0.6f 0.0f)); PropertiesOpt = None }
-             Entity.Sensor == true
-             Entity.NavShape == EmptyNavShape
-             Entity.Pickable == false
-             Entity.BodyCollisionEvent =|> fun evt -> WeaponCollide evt.Data
-             Entity.BodySeparationExplicitEvent =|> fun evt -> WeaponSeparateExplicit evt.Data
-             Entity.BodySeparationImplicitEvent =|> fun evt -> WeaponSeparateImplicit evt.Data]]
 
     override this.Message (character, message, entity, world) =
 
@@ -99,24 +84,50 @@ type CharacterDispatcher (character : Character) =
             let signals = if attackedCharacters.Count > 0 then PublishAttacks attackedCharacters :> Signal :: signals else signals
             withSignals signals character
 
-        | WeaponCollide collisionData ->
-            match collisionData.BodyShapeCollidee.BodyId.BodySource with
-            | :? Entity as collidee when collidee.Is<CharacterDispatcher> world && collidee <> entity ->
-                let collideeCharacter = collidee.GetCharacter world
-                if character.CharacterType <> collideeCharacter.CharacterType then
-                    let character = { character with WeaponCollisions = Set.add collidee character.WeaponCollisions }
+        | CharacterPenetration penetrationData ->
+            match penetrationData.BodyShapePenetratee.BodyId.BodySource with
+            | :? Entity as penetratee when penetratee.Is<CharacterDispatcher> world ->
+                let characterPenetratee = penetratee.GetCharacter world
+                match (character.CharacterType, characterPenetratee.CharacterType) with
+                | (Enemy, Enemy) ->
+                    if penetratee.Name = "Player" then Log.error "WTF"
+                    let character = { character with CharacterCollisions = Set.add penetratee character.CharacterCollisions }
+                    just character
+                | (_, _) -> just character
+            | _ -> just character
+
+        | CharacterSeparationExplicit separationData ->
+            match separationData.BodyShapeSeparatee.BodyId.BodySource with
+            | :? Entity as separatee when separatee.Is<CharacterDispatcher> world && separatee <> entity ->
+                let character = { character with CharacterCollisions = Set.remove separatee character.CharacterCollisions }
+                just character
+            | _ -> just character
+
+        | CharacterSeparationImplicit separationData ->
+            match separationData.BodyId.BodySource with
+            | :? Entity as separatee when separatee.Is<CharacterDispatcher> world && separatee <> entity ->
+                let character = { character with CharacterCollisions = Set.remove separatee character.CharacterCollisions }
+                just character
+            | _ -> just character
+
+        | WeaponPenetration penetrationData ->
+            match penetrationData.BodyShapePenetratee.BodyId.BodySource with
+            | :? Entity as penetratee when penetratee.Is<CharacterDispatcher> world && penetratee <> entity ->
+                let characterPenetratee = penetratee.GetCharacter world
+                if character.CharacterType <> characterPenetratee.CharacterType then
+                    let character = { character with WeaponCollisions = Set.add penetratee character.WeaponCollisions }
                     just character
                 else just character
             | _ -> just character
 
-        | WeaponSeparateExplicit separationData ->
+        | WeaponSeparationExplicit separationData ->
             match separationData.BodyShapeSeparatee.BodyId.BodySource with
             | :? Entity as separatee when separatee.Is<CharacterDispatcher> world && separatee <> entity ->
                 let character = { character with WeaponCollisions = Set.remove separatee character.WeaponCollisions }
                 just character
             | _ -> just character
 
-        | WeaponSeparateImplicit separationData ->
+        | WeaponSeparationImplicit separationData ->
             match separationData.BodyId.BodySource with
             | :? Entity as separatee when separatee.Is<CharacterDispatcher> world ->
                 let character = { character with WeaponCollisions = Set.remove separatee character.WeaponCollisions }
@@ -128,7 +139,10 @@ type CharacterDispatcher (character : Character) =
         match command with
         | Register ->
             let animatedModel = entity / Constants.Gameplay.CharacterAnimatedModelName
+            let weapon = entity / Constants.Gameplay.CharacterWeaponName
             let world = animatedModel.SetAnimations [|Animation.loop GameTime.zero None "Armature|Idle"|] world
+            let world = animatedModel.AnimateBones world
+            let world = weapon.AutoBounds world
             withSignal SyncWeaponTransform world
 
         | UpdateTransform (position, rotation) ->
@@ -183,6 +197,38 @@ type CharacterDispatcher (character : Character) =
             let weapon = entity / Constants.Gameplay.CharacterWeaponName
             weapon.RayCast ray world
         | intersections -> intersections
+
+    override this.Content (character, _) =
+
+        [// hearts
+         if character.CharacterType = Player then
+            for i in 0 .. dec 5 do
+                Content.staticSprite ("Heart+" + string i)
+                    [Entity.Position == v3 (-284.0f + single i * 32.0f) -144.0f 0.0f
+                     Entity.Size == v3 32.0f 32.0f 0.0f
+                     Entity.StaticImage := if character.HitPoints >= inc i then Assets.Gameplay.HeartFull else Assets.Gameplay.HeartEmpty
+                     Entity.MountOpt == None]
+
+         // animated model
+         Content.entity<AnimatedModelDispatcher> Constants.Gameplay.CharacterAnimatedModelName
+            [Entity.Size == v3Dup 2.0f
+             Entity.Offset == v3 0.0f 1.0f 0.0f
+             Entity.MaterialProperties == MaterialProperties.defaultProperties
+             Entity.AnimatedModel == Assets.Gameplay.JoanModel
+             Entity.Pickable == false]
+
+         // weapon
+         Content.entity<RigidModelDispatcher> Constants.Gameplay.CharacterWeaponName
+            [Entity.Offset == v3 0.0f 0.5f 0.0f
+             Entity.StaticModel := character.WeaponModel
+             Entity.BodyType == Static
+             Entity.BodyShape == BoxShape { Size = v3 0.3f 1.2f 0.3f; TransformOpt = Some (Affine.makeTranslation (v3 0.0f 0.6f 0.0f)); PropertiesOpt = None }
+             Entity.Sensor == true
+             Entity.NavShape == EmptyNavShape
+             Entity.Pickable == false
+             Entity.BodyPenetrationEvent =|> fun evt -> WeaponPenetration evt.Data
+             Entity.BodySeparationExplicitEvent =|> fun evt -> WeaponSeparationExplicit evt.Data
+             Entity.BodySeparationImplicitEvent =|> fun evt -> WeaponSeparationImplicit evt.Data]]
 
 type EnemyDispatcher () =
     inherit CharacterDispatcher (Character.initialEnemy)

@@ -47,7 +47,6 @@ and Unsubscription = World -> World
 
 /// Describes the type of snapshot taken for operation tracking.
 and SnapshotType =
-    | RerenderLightMap
     | WipePropagationTargets
     | TranslateEntity
     | RotateEntity
@@ -73,6 +72,7 @@ and SnapshotType =
     | RestorePoint
     | RencenterInProbeBounds
     | ResetProbeBounds
+    | ReregisterPhysics
     | SynchronizeNav
     | SetEditMode of int
     | ReloadCode
@@ -82,7 +82,6 @@ and SnapshotType =
 
     member this.Label =
         match this with
-        | RerenderLightMap -> (scstringMemo this).Spaced
         | WipePropagationTargets -> (scstringMemo this).Spaced
         | TranslateEntity -> (scstringMemo this).Spaced
         | RotateEntity -> (scstringMemo this).Spaced
@@ -108,6 +107,7 @@ and SnapshotType =
         | RestorePoint -> (scstringMemo this).Spaced
         | RencenterInProbeBounds -> (scstringMemo this).Spaced
         | ResetProbeBounds -> (scstringMemo this).Spaced
+        | ReregisterPhysics -> (scstringMemo this).Spaced
         | SynchronizeNav -> (scstringMemo this).Spaced
         | SetEditMode i -> (scstringMemo this).Spaced + " (" + string (inc i) + " of 2)"
         | ReloadCode -> (scstringMemo this).Spaced
@@ -115,42 +115,55 @@ and SnapshotType =
         | Halt -> (scstringMemo this).Spaced
         | UserDefinedSnapshot (_, label) -> label
 
+/// Context for editing behavior.
+and EditContext =
+    { Snapshot : SnapshotType -> World -> World
+      FocusProperty : unit -> unit
+      UnfocusProperty : unit -> unit
+      SearchAssetViewer : unit -> unit
+      PropertyValueStrPreviousRef : string ref
+      DragDropPayloadOpt : string option
+      SnapDrag : single
+      SelectedScreen : Screen
+      SelectedGroup : Group
+      SelectedEntityOpt : Entity option
+      ToSymbolMemo : IDictionary<struct (Type * obj), Symbol>
+      OfSymbolMemo : IDictionary<struct (Type * Symbol), obj> }
+
 /// Details replacement for editing behavior for a simulant property, allowing the user to indicate that a property was
 /// replaced.
 and [<ReferenceEquality>] ReplaceProperty =
-    { Snapshot : SnapshotType -> World -> World
-      FocusProperty : World -> World
-      IndicateReplaced : World -> World
-      PropertyDescriptor : PropertyDescriptor }
+    { IndicateReplaced : unit -> unit
+      PropertyDescriptor : PropertyDescriptor
+      EditContext : EditContext }
 
 /// Details additional editing behavior for a simulant's properties.
 and AppendProperties =
-    { Snapshot : SnapshotType -> World -> World
-      UnfocusProperty : World -> World }
+    { EditContext : EditContext }
+
+/// Details additional editing behavior for hierarchy context menu.
+and HierarchyContext =
+    { EditContext : EditContext }
 
 /// Details additional editing behavior for viewport context menu.
-and ContextHierarchy =
-    { Snapshot : SnapshotType -> World -> World }
-
-/// Details additional editing behavior for viewport context menu.
-and ContextViewport =
-    { Snapshot : SnapshotType -> World -> World
-      RightClickPosition : Vector2 }
+and ViewportContext =
+    { RightClickPosition : Vector2
+      EditContext : EditContext }
 
 /// Details the additional editing behavior for a simulant in a viewport.
-and [<ReferenceEquality>] OverlayViewport =
-    { Snapshot : SnapshotType -> World -> World
-      ViewportView : Matrix4x4
+and [<ReferenceEquality>] ViewportOverlay =
+    { ViewportView : Matrix4x4
       ViewportProjection : Matrix4x4
-      ViewportBounds : Box2 }
+      ViewportBounds : Box2
+      EditContext : EditContext }
 
 /// Specifies an aspect of simulant editing to perform.
 and [<ReferenceEquality>] EditOperation =
     | ReplaceProperty of ReplaceProperty
     | AppendProperties of AppendProperties
-    | ContextHierarchy of ContextHierarchy
-    | ContextViewport of ContextViewport
-    | OverlayViewport of OverlayViewport
+    | HierarchyContext of HierarchyContext
+    | ViewportContext of ViewportContext
+    | ViewportOverlay of ViewportOverlay
 
 /// The data for a change in a simulant.
 and ChangeData =
@@ -568,7 +581,7 @@ and GroupDispatcher () =
     default this.TryUntruncateModel (_, _, _) = None
 
 /// The default dispatcher for entities.
-and EntityDispatcher (is2d, perimeterCentered, physical, lightProbe, light) =
+and EntityDispatcher (is2d, physical, lightProbe, light) =
     inherit SimulantDispatcher ()
 
     static member Properties =
@@ -598,7 +611,6 @@ and EntityDispatcher (is2d, perimeterCentered, physical, lightProbe, light) =
          Define? Visible true
          Define? VisibleLocal true
          Define? Pickable true
-         Define? PerimeterCentered true
          Define? Static false
          Define? AlwaysUpdate false
          Define? AlwaysRender false
@@ -662,9 +674,6 @@ and EntityDispatcher (is2d, perimeterCentered, physical, lightProbe, light) =
     /// Attempt to untruncate an entity model.
     abstract TryUntruncateModel<'a> : 'a * Entity* World  -> 'a option
     default this.TryUntruncateModel (_, _, _) = None
-
-    /// Whether the dispatcher uses a centered perimeter by default.
-    member this.PerimeterCentered = perimeterCentered
 
     /// Whether the dispatcher has a 2-dimensional transform interpretation.
     member this.Is2d = is2d
@@ -745,7 +754,7 @@ and [<ReferenceEquality>] PropertyContent =
           PropertyValue = value }
 
 /// Describes definition content to the MMCC content system.
-and [<ReferenceEquality>] DefinitionContent =
+and [<ReferenceEquality>] DefinitionContent<'s when 's :> Simulant> =
     | PropertyContent of PropertyContent
     | EventSignalContent of obj Address * obj
     | EventHandlerContent of PartialEquatable<obj Address, Event -> obj>
@@ -755,8 +764,8 @@ and SimulantContent =
     abstract DispatcherNameOpt : string option
     abstract SimulantNameOpt : string option
     abstract SimulantCachedOpt : Simulant with get, set
-    abstract EventSignalContentsOpt : OrderedDictionary<obj Address * obj, Guid>
-    abstract EventHandlerContentsOpt : OrderedDictionary<int * obj Address, Guid * (Event -> obj)>
+    abstract EventSignalContentsOpt : OrderedDictionary<obj Address * obj, uint64>
+    abstract EventHandlerContentsOpt : OrderedDictionary<int * obj Address, uint64 * (Event -> obj)>
     abstract PropertyContentsOpt : List<PropertyContent>
     abstract GetChildContentsOpt<'v when 'v :> SimulantContent> : unit -> OrderedDictionary<string, 'v>
 
@@ -764,8 +773,8 @@ and SimulantContent =
 and [<ReferenceEquality>] GameContent =
     { InitialScreenNameOpt : string option
       mutable SimulantCachedOpt : Simulant
-      mutable EventSignalContentsOpt : OrderedDictionary<obj Address * obj, Guid> // OPTIMIZATION: lazily created.
-      mutable EventHandlerContentsOpt : OrderedDictionary<int * obj Address, Guid * (Event -> obj)> // OPTIMIZATION: lazily created.
+      mutable EventSignalContentsOpt : OrderedDictionary<obj Address * obj, uint64> // OPTIMIZATION: lazily created.
+      mutable EventHandlerContentsOpt : OrderedDictionary<int * obj Address, uint64 * (Event -> obj)> // OPTIMIZATION: lazily created.
       mutable PropertyContentsOpt : List<PropertyContent> // OPTIMIZATION: lazily created.
       ScreenContents : OrderedDictionary<string, ScreenContent> }
     interface SimulantContent with
@@ -791,8 +800,8 @@ and [<ReferenceEquality>] ScreenContent =
       ScreenBehavior : ScreenBehavior
       GroupFilePathOpt : string option
       mutable SimulantCachedOpt : Simulant
-      mutable EventSignalContentsOpt : OrderedDictionary<obj Address * obj, Guid> // OPTIMIZATION: lazily created.
-      mutable EventHandlerContentsOpt : OrderedDictionary<int * obj Address, Guid * (Event -> obj)> // OPTIMIZATION: lazily created.
+      mutable EventSignalContentsOpt : OrderedDictionary<obj Address * obj, uint64> // OPTIMIZATION: lazily created.
+      mutable EventHandlerContentsOpt : OrderedDictionary<int * obj Address, uint64 * (Event -> obj)> // OPTIMIZATION: lazily created.
       mutable PropertyContentsOpt : List<PropertyContent> // OPTIMIZATION: lazily created.
       GroupContents : OrderedDictionary<string, GroupContent> }
     interface SimulantContent with
@@ -820,8 +829,8 @@ and [<ReferenceEquality>] GroupContent =
       GroupName : string
       GroupFilePathOpt : string option
       mutable SimulantCachedOpt : Simulant
-      mutable EventSignalContentsOpt : OrderedDictionary<obj Address * obj, Guid> // OPTIMIZATION: lazily created.
-      mutable EventHandlerContentsOpt : OrderedDictionary<int * obj Address, Guid * (Event -> obj)> // OPTIMIZATION: lazily created.
+      mutable EventSignalContentsOpt : OrderedDictionary<obj Address * obj, uint64> // OPTIMIZATION: lazily created.
+      mutable EventHandlerContentsOpt : OrderedDictionary<int * obj Address, uint64 * (Event -> obj)> // OPTIMIZATION: lazily created.
       mutable PropertyContentsOpt : List<PropertyContent> // OPTIMIZATION: lazily created.
       mutable EntityContentsOpt : OrderedDictionary<string, EntityContent> } // OPTIMIZATION: lazily created.
     interface SimulantContent with
@@ -848,8 +857,8 @@ and [<ReferenceEquality>] EntityContent =
       EntityName : string
       EntityFilePathOpt : string option
       mutable EntityCachedOpt : Entity // OPTIMIZATION: allows us to more often hit the EntityStateOpt cache. May be null.
-      mutable EventSignalContentsOpt : OrderedDictionary<obj Address * obj, Guid> // OPTIMIZATION: lazily created.
-      mutable EventHandlerContentsOpt : OrderedDictionary<int * obj Address, Guid * (Event -> obj)> // OPTIMIZATION: lazily created.
+      mutable EventSignalContentsOpt : OrderedDictionary<obj Address * obj, uint64> // OPTIMIZATION: lazily created.
+      mutable EventHandlerContentsOpt : OrderedDictionary<int * obj Address, uint64 * (Event -> obj)> // OPTIMIZATION: lazily created.
       mutable PropertyContentsOpt : List<PropertyContent> // OPTIMIZATION: lazily created.
       mutable EntityContentsOpt : OrderedDictionary<string, EntityContent> } // OPTIMIZATION: lazily created.
     interface SimulantContent with
@@ -893,7 +902,7 @@ and [<ReferenceEquality; CLIMutable>] GameState =
       Eye3dFrustumExterior : Frustum // OPTIMIZATION: cached value.
       Eye3dFrustumImposter : Frustum // OPTIMIZATION: cached value.
       Order : int64
-      Id : Guid }
+      Id : uint64 }
 
     /// Try to get an xtension property and its type information.
     static member tryGetProperty (propertyName, gameState, propertyRef : Property outref) =
@@ -948,7 +957,7 @@ and [<ReferenceEquality; CLIMutable>] GameState =
           Eye3dFrustumExterior = viewportExterior.Frustum (eye3dCenter, eye3dRotation)
           Eye3dFrustumImposter = viewportImposter.Frustum (eye3dCenter, eye3dRotation)
           Order = Core.getTimeStampUnique ()
-          Id = Gen.id }
+          Id = Gen.id64 }
 
     interface SimulantState with
         member this.GetXtension () = this.Xtension
@@ -1155,7 +1164,6 @@ and [<ReferenceEquality; CLIMutable>] EntityState =
     member this.Physical with get () = this.Dispatcher.Physical || Array.exists (fun (facet : Facet) -> facet.Physical) this.Facets
     member this.LightProbe with get () = this.Dispatcher.LightProbe || Array.exists (fun (facet : Facet) -> facet.LightProbe) this.Facets
     member this.Light with get () = this.Dispatcher.Light || Array.exists (fun (facet : Facet) -> facet.Light) this.Facets
-    member this.PerimeterCentered with get () = this.Transform.PerimeterCentered and set value = this.Transform.PerimeterCentered <- value
     member this.Static with get () = this.Transform.Static and set value = this.Transform.Static <- value
     member this.Optimized with get () = this.Transform.Optimized
 
@@ -1215,7 +1223,7 @@ and [<ReferenceEquality; CLIMutable>] EntityState =
 
     /// Make an entity state value.
     static member make imperative surnamesOpt overlayNameOpt (dispatcher : EntityDispatcher) =
-        let mutable transform = Transform.makeDefault dispatcher.PerimeterCentered
+        let mutable transform = Transform.makeDefault ()
         transform.Imperative <- imperative
         let (id, surnames) = Gen.id64AndSurnamesIf surnamesOpt
         { Transform = transform

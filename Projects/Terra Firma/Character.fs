@@ -16,6 +16,9 @@ type JumpState =
         { LastTime = 0L
           LastTimeOnGround = 0L }
 
+type ObstructedState =
+    { ObstructedTime : int64 }
+
 type AttackState =
     { AttackTime : int64
       FollowUpBuffered : bool
@@ -34,6 +37,7 @@ type WoundState =
 
 type ActionState =
     | NormalState
+    | ObstructedState of ObstructedState
     | AttackState of AttackState
     | InjuryState of InjuryState
     | WoundState of WoundState
@@ -47,6 +51,7 @@ type [<ReferenceEquality; SymbolicExpansion>] Character =
       HitPoints : int
       ActionState : ActionState
       JumpState : JumpState
+      CharacterCollisions : Entity Set
       WeaponCollisions : Entity Set
       WalkSpeed : single
       TurnSpeed : single
@@ -117,6 +122,9 @@ type [<ReferenceEquality; SymbolicExpansion>] Character =
     static member private tryUpdateActionAnimation time character world =
         match character.ActionState with
         | NormalState -> None
+        | ObstructedState obstructed ->
+            let animation = Animation.loop obstructed.ObstructedTime None "Armature|Idle"
+            Some (animation, false)
         | AttackState attack ->
             let localTime = time - attack.AttackTime
             match localTime with
@@ -195,15 +203,39 @@ type [<ReferenceEquality; SymbolicExpansion>] Character =
         | Enemy ->
         
             // enemy traversal
-            if character.ActionState = NormalState then
+            let (navSpeedsOpt, character) =
+                match character.ActionState with
+                | NormalState | ObstructedState _ ->
+                    let order =
+                        character.CharacterCollisions |>
+                        Array.ofSeq |>
+                        Array.map (fun character -> (false, character.GetPosition world)) |>
+                        Array.cons (true, position) |>
+                        Array.sortBy (fun (_, position) -> Vector3.DistanceSquared (position, playerPosition)) |>
+                        Array.findIndex fst
+                    let canUnobstruct =
+                        match character.ActionState with
+                        | ObstructedState obstructed ->
+                            let localTime = time - obstructed.ObstructedTime
+                            order = 0 && localTime >= 10L
+                        | _ -> order = 0
+                    let character =
+                        if canUnobstruct then { character with ActionState = NormalState }
+                        elif character.ActionState = NormalState then { character with ActionState = ObstructedState { ObstructedTime = time }}
+                        else character
+                    let navSpeed = if character.ActionState = NormalState then (0.04f, 0.1f) else (0.0f, 0.3f)
+                    (Some navSpeed, character)
+                | _ -> (None, character)
+            match navSpeedsOpt with
+            | Some (moveSpeed, turnSpeed) ->
                 let sphere =
                     if position.Y - playerPosition.Y >= 0.25f
                     then Sphere (playerPosition, 0.1f) // when above player
                     else Sphere (playerPosition, 0.7f) // when at or below player
                 let nearest = sphere.Nearest position
-                let followOutput = World.nav3dFollow (Some 1.0f) (Some 10.0f) 0.04f 0.1f position rotation nearest Simulants.Gameplay world
+                let followOutput = World.nav3dFollow (Some 1.0f) (Some 10.0f) moveSpeed turnSpeed position rotation nearest Simulants.Gameplay world
                 (followOutput.NavPosition, followOutput.NavRotation, followOutput.NavLinearVelocity, followOutput.NavAngularVelocity, character)
-            else (position, rotation, v3Zero, v3Zero, character)
+            | None -> (position, rotation, v3Zero, v3Zero, character)
 
     static member private updateAction time (position : Vector3) (rotation : Quaternion) (playerPosition : Vector3) character =
         match character.CharacterType with
@@ -230,6 +262,7 @@ type [<ReferenceEquality; SymbolicExpansion>] Character =
     static member private updateState time character =
         match character.ActionState with
         | NormalState -> character
+        | ObstructedState _ -> character
         | AttackState attack ->
             let actionState =
                 let localTime = time - attack.AttackTime
@@ -295,7 +328,7 @@ type [<ReferenceEquality; SymbolicExpansion>] Character =
                         if localTime > 10L && not attack.FollowUpBuffered
                         then { character with ActionState = AttackState { attack with FollowUpBuffered = true }}
                         else character
-                    | InjuryState _ | WoundState _ -> character
+                    | ObstructedState _ | InjuryState _ | WoundState _ -> character
                 (false, character)
             else (false, character)
 
@@ -319,6 +352,7 @@ type [<ReferenceEquality; SymbolicExpansion>] Character =
           HitPoints = 5
           ActionState = NormalState
           JumpState = JumpState.initial
+          CharacterCollisions = Set.empty
           WeaponCollisions = Set.empty
           WalkSpeed = 0.05f
           TurnSpeed = 0.05f

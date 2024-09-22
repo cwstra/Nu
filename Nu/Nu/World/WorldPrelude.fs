@@ -15,7 +15,7 @@ open DotRecast.Recast.Geom
 open Prime
 
 // The inferred attributes of an entity that are used to construct its bounds.
-// HACK: added Important field to allow attributes to be marked as unimportant.
+// HACK: added Unimportant field to allow attributes to be marked as unimportant.
 // TODO: P1: see if we can refactor this type to make its representation and algo less hacky.
 type AttributesInferred =
     { Unimportant : bool
@@ -147,7 +147,7 @@ type NavBuilderResultData =
     static member make (builderResult : RcBuilderResult) =
 
         // compute points
-        let dmesh = builderResult.GetMeshDetail ()
+        let dmesh = builderResult.MeshDetail
         let mutable pointsMinY = Single.MaxValue
         let mutable pointsMaxY = Single.MinValue
         let points =

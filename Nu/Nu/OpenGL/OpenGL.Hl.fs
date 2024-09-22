@@ -42,7 +42,11 @@ module Hl =
 #if DEBUG
     let private DebugMessageListener (_ : DebugSource) (_ : DebugType) (_ : uint) (severity : DebugSeverity) (length : int) (message : nativeint) (_ : nativeint) =
         match severity with
-        | DebugSeverity.DebugSeverityMedium
+        | DebugSeverity.DebugSeverityMedium ->
+            let messageBytes = Array.zeroCreate<byte> length
+            Marshal.Copy (message, messageBytes, 0, length)
+            let messageStr = Encoding.ASCII.GetString (messageBytes, 0, length)
+            Log.warn messageStr
         | DebugSeverity.DebugSeverityHigh ->
             let messageBytes = Array.zeroCreate<byte> length
             Marshal.Copy (message, messageBytes, 0, length)
@@ -77,17 +81,22 @@ module Hl =
         SDL.SDL_GL_MakeCurrent (window, glContext) |> ignore<int>
         Gl.BindAPI ()
         Assert ()
-        let version = Gl.GetString StringName.Version
-        Log.info ("Initialized OpenGL " + version + ".")
-        if  not (version.StartsWith "4.1") &&
-            not (version.StartsWith "4.2") &&
-            not (version.StartsWith "4.3") &&
-            not (version.StartsWith "4.4") &&
-            not (version.StartsWith "4.5") &&
-            not (version.StartsWith "4.6") &&
-            not (version.StartsWith "5.0") (* heaven forbid... *) then
+        let versionStr = Gl.GetString StringName.Version
+        Log.info ("Initialized OpenGL " + versionStr + ".")
+        if  not (versionStr.StartsWith "4.1") &&
+            not (versionStr.StartsWith "4.2") &&
+            not (versionStr.StartsWith "4.3") &&
+            not (versionStr.StartsWith "4.4") &&
+            not (versionStr.StartsWith "4.5") &&
+            not (versionStr.StartsWith "4.6") &&
+            not (versionStr.StartsWith "5.0") (* heaven forbid... *) then
             Log.fail "Failed to create OpenGL version 4.1 or higher. Install your system's latest graphics drivers and try again."
-        glContext
+        let vendorName = Gl.GetString StringName.Vendor
+        let glFinishRequired =
+            Constants.Render.VendorNamesExceptedFromGlFinishSwapRequirement |>
+            List.notExists (fun vendorName2 -> String.Equals (vendorName, vendorName2, StringComparison.InvariantCultureIgnoreCase))
+        if glFinishRequired then Log.warn "Requirement to call 'glFinish' before swapping is detected on current hardware. This will likely reduce rendering performance."
+        (glFinishRequired, glContext)
 
     /// Create a SDL OpenGL context with the given window that shares the current context. Originating thread must wait
     /// on the given WaitOnce object before continuing processing.
@@ -157,7 +166,7 @@ module Hl =
     /// Save the current bound RGBA framebuffer to an image file.
     /// Only works on Windows platforms for now.
     /// TODO: make this work on non-Windows platforms!
-    let SaveFramebufferRgbaToBitmap width height (filePath : string) =
+    let SaveFramebufferRgbaToBitmap (width, height, filePath : string) =
         let platform = Environment.OSVersion.Platform
         if platform = PlatformID.Win32NT || platform = PlatformID.Win32Windows then
             let pixelFloats = Array.zeroCreate<single> (width * height * 4)
@@ -177,23 +186,6 @@ module Hl =
                     bitmap.Save (filePath, Drawing.Imaging.ImageFormat.Bmp)
                 with exn -> Log.info (scstring exn)
             finally handle.Free ()
-
-    /// Save the current bound framebuffer to an image file.
-    /// Only works on Windows platforms for now.
-    /// TODO: make this work on non-Windows platforms!
-    let SaveFramebufferDepthToBitmap width height (filePath : string) =
-        let pixelFloats = Array.zeroCreate<single> (width * height)
-        let handle = GCHandle.Alloc (pixelFloats, GCHandleType.Pinned)
-        try try let pixelDataPtr = handle.AddrOfPinnedObject ()
-                Gl.ReadPixels (0, 0, width, height, PixelFormat.DepthComponent, PixelType.Float, pixelDataPtr)
-                let pixelBytes = pixelFloats |> Array.map (fun depth -> [|0uy; 0uy; byte (depth * 255.0f); 255uy|]) |> Array.concat
-                use bitmap = new Drawing.Bitmap (width, height, Drawing.Imaging.PixelFormat.Format32bppArgb)
-                let bitmapData = bitmap.LockBits (Drawing.Rectangle (0, 0, width, height), Drawing.Imaging.ImageLockMode.WriteOnly, Drawing.Imaging.PixelFormat.Format32bppArgb)
-                Marshal.Copy (pixelBytes, 0, bitmapData.Scan0, pixelBytes.Length)
-                bitmap.UnlockBits bitmapData
-                bitmap.Save (filePath, Drawing.Imaging.ImageFormat.Bmp)
-            with exn -> Log.info (scstring exn)
-        finally handle.Free ()
 
     /// Report the fact that a draw call has just been made with the given number of instances.
     let ReportDrawCall drawInstances =

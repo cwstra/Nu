@@ -1,10 +1,12 @@
 Nu Game Engine [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/bryanedds/Nu/blob/master/License.md)
 =
 
-Big Update!!!
+UPDATE: **Omni Blade**, the first commercial game built with Nu, is **available on Steam NOW!** - https://store.steampowered.com/app/3089800/Omni_Blade/
 =
-**Omni Blade**, the first commercial game built with Nu, is **available on Steam NOW** - https://store.steampowered.com/app/3089800/Omni_Blade
-![image](https://github.com/user-attachments/assets/f2769f50-bcc8-44bb-aad9-c81e5b2ad281)
+
+![image](https://github.com/user-attachments/assets/81f64a06-ffac-487e-8a59-6ca827b4c67a)
+
+![image](https://github.com/user-attachments/assets/0789e71d-fc49-496c-b9fc-2c9855a9e8e7)
 
 **Live Nu Game Engine Support on Discord here -** https://discord.gg/BN79RxYAjD
 
@@ -17,10 +19,10 @@ So... just what is the **Nu Game Engine**?
 This repository hosts several projects, including -
 
 - the sample 2D demo game ['Breakout'](https://github.com/bryanedds/Nu/tree/master/Projects/Breakout).
-- the sample 2D puzzle game ['Twenty48'](https://github.com/bryanedds/Nu/tree/master/Projects/Twenty48).
-- the sample 2D action game ['BlazeVector'](https://github.com/bryanedds/Nu/tree/master/Projects/BlazeVector).
-- the sample 3D project ['TerraFirma'](https://github.com/bryanedds/Nu/tree/master/Projects/TerraFirma).
-- the commercial game demo for ['OmniBlade'](https://github.com/bryanedds/Nu/tree/master/Projects/OmniBlade), full game available now here - https://store.steampowered.com/app/3089800/Omni_Blade
+- the sample 2D puzzle game ['Twenty 48'](https://github.com/bryanedds/Nu/tree/master/Projects/Twenty%2048).
+- the sample 2D action game ['Blaze Vector'](https://github.com/bryanedds/Nu/tree/master/Projects/Blaze%20Vector).
+- the sample 3D project ['Terra Firma'](https://github.com/bryanedds/Nu/tree/master/Projects/Terra%20Firma).
+- the commercial game demo for ['Omni Blade'](https://github.com/bryanedds/Nu/tree/omni-blade/Projects/Omni%20Blade), full game available now here - https://store.steampowered.com/app/3089800/Omni_Blade/
 
 Getting Started with Nu
 =======================
@@ -35,11 +37,17 @@ Some Media on the Nu Game Engine
 ![image](https://github.com/bryanedds/Nu/assets/1625560/54785591-6b39-4a27-939d-b2f3b29f9bf1)
 Real-time WYSIWYG editing with hot asset and live code reloading, and the ability to undo and redo gameplay.
 
-![image](https://github.com/bryanedds/Nu/assets/1625560/0b4778aa-c493-4d9d-9a8a-00e527c831ad)
-Animated 3D model rendering with physically-based, deferred rendering with soft shadows.
-
 ![image](https://github.com/bryanedds/Nu/assets/1625560/71fb4581-265f-4530-bc5e-93fc1a37f225)
 Rendering made efficient with instancing-by-default.
+
+![image](https://github.com/user-attachments/assets/58e5fb9b-372a-4674-af4a-0b937268b3b4)
+Photo-realistic yet user-friendly deferred, physically-based rendering.
+
+![image](https://github.com/user-attachments/assets/fbba00a1-02a6-43ce-8a39-688797174009)
+Editing the above photo-realistic scene in real-time.
+
+![image](https://github.com/user-attachments/assets/37ca553f-5a6c-4056-9177-a4e1f4cff54d)
+Our new soft-shadow, screen-space reflection, and volumetric fog systems.
 
 ![image](https://user-images.githubusercontent.com/1625560/209454635-b55ecb09-bbb9-4d71-9bd8-fa715c51cd4c.png)
 First class support for unified 2D game development in our fully realized 20-hour indie RPG, OmniBlade.
@@ -54,7 +62,7 @@ Directly editing the entire game state in the new editor.
 Algebraic terrain rendering thanks to contributions from **[@deanjl](https://github.com/deanjl)**.
 
 ![image](https://github.com/bryanedds/Nu/assets/1625560/1d3ebe11-da94-46ad-bae1-22fc5f7c9b3e)
-Our little 3D dog-fooding demo, TerraFirma.
+Our little 3D dog-fooding demo, Terra Firma.
 
 ![image](https://github.com/bryanedds/Nu/assets/1625560/e8571dd1-bdd1-4663-b2ae-87abeef179d9)
 Recursive Prefab-like functionality via Entity Structure Propagation.

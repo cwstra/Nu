@@ -871,7 +871,6 @@ module BasicStaticSpriteEmitter =
                 particle'.Transform.Angles <- particle.Body.Angles
                 particle'.Transform.Offset <- particle.Offset
                 particle'.Transform.Size <- particle.Size
-                particle'.Transform.PerimeterCentered <- true
                 particle'.Color <- particle.Color
                 particle'.Emission <- particle.Emission
                 particle'.InsetOpt <- if particle.Inset.Equals box2Zero then ValueNone else ValueSome particle.Inset
@@ -879,6 +878,7 @@ module BasicStaticSpriteEmitter =
         { Absolute = emitter.Absolute
           Elevation = emitter.Elevation
           Horizon = emitter.Body.Position.Y
+          ClipOpt = ValueNone // TODO: implement clip support for particles.
           Blend = emitter.Blend
           Image = emitter.Image
           Particles = particles' }
@@ -1125,7 +1125,6 @@ module BasicStaticBillboardEmitter =
                 particle'.Transform.Angles <- particle.Body.Angles
                 particle'.Transform.Offset <- particle.Offset
                 particle'.Transform.Size <- particle.Size
-                particle'.Transform.PerimeterCentered <- true
                 particle'.Color <- particle.Color
                 particle'.Emission <- particle.Emission
                 particle'.InsetOpt <- if particle.Inset.Equals box2Zero then ValueNone else ValueSome particle.Inset

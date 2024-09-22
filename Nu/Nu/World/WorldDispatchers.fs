@@ -8,33 +8,28 @@ open Prime
 open Nu
 
 /// A 2d entity dispatcher.
-type Entity2dDispatcher (perimeterCentered, physical, lightProbe, light) =
-    inherit EntityDispatcher (true, perimeterCentered, physical, lightProbe, light)
-
-    new (physical, lightProbe, light) =
-        Entity2dDispatcher (Constants.Engine.Entity2dPerimeterCenteredDefault, physical, lightProbe, light)
+type Entity2dDispatcher (physical, lightProbe, light) =
+    inherit EntityDispatcher (true, physical, lightProbe, light)
 
     static member Properties =
-        [define Entity.Size Constants.Engine.Entity2dSizeDefault
-         define Entity.PerimeterCentered Constants.Engine.Entity2dPerimeterCenteredDefault]
+        [define Entity.Size Constants.Engine.Entity2dSizeDefault]
 
 /// A gui entity dispatcher.
 type GuiDispatcher () =
-    inherit EntityDispatcher (true, Constants.Engine.EntityGuiPerimeterCenteredDefault, false, false, false)
+    inherit EntityDispatcher (true, false, false, false)
 
     static member Facets =
         [typeof<LayoutFacet>]
 
     static member Properties =
         [define Entity.Size Constants.Engine.EntityGuiSizeDefault
-         define Entity.PerimeterCentered Constants.Engine.EntityGuiPerimeterCenteredDefault
          define Entity.Absolute true
          define Entity.Presence Omnipresent
-         define Entity.DisabledColor Constants.Gui.DisabledColor]
+         define Entity.DisabledColor Constants.Gui.DisabledColorDefault]
 
 /// A 3d entity dispatcher.
 type Entity3dDispatcher (physical, lightProbe, light) =
-    inherit EntityDispatcher (false, true, physical, lightProbe, light)
+    inherit EntityDispatcher (false, physical, lightProbe, light)
 
     static member Properties =
         [define Entity.Size Constants.Engine.Entity3dSizeDefault]
@@ -48,7 +43,7 @@ type Entity3dDispatcher (physical, lightProbe, light) =
 
 /// A vui dispatcher (gui in 3d).
 type VuiDispatcher () =
-    inherit EntityDispatcher (false, true, false, false, false)
+    inherit EntityDispatcher (false, false, false, false)
 
     static member Properties =
         [define Entity.Size Constants.Engine.EntityVuiSizeDefault]
@@ -178,24 +173,20 @@ type PanelDispatcher () =
 
 /// Gives an entity the base behavior of basic static sprite emitter.
 type BasicStaticSpriteEmitterDispatcher () =
-    inherit Entity2dDispatcher (true, false, false, false)
+    inherit Entity2dDispatcher (true, false, false)
 
     static member Facets =
         [typeof<BasicStaticSpriteEmitterFacet>]
 
-    static member Properties =
-        [define Entity.PerimeterCentered true]
-
 /// Gives an entity the base behavior of a 2d effect.
 type Effect2dDispatcher () =
-    inherit Entity2dDispatcher (true, false, false, false)
+    inherit Entity2dDispatcher (true, false, false)
 
     static member Facets =
         [typeof<EffectFacet>]
 
     static member Properties =
-        [define Entity.PerimeterCentered true
-         define Entity.EffectDescriptor (scvalue<Effects.EffectDescriptor> "[[EffectName Effect] [LifeTimeOpt None] [Definitions []] [Content [Contents [Shift 0] [[StaticSprite [Resource Default Image] [] Nil]]]]]")]
+        [define Entity.EffectDescriptor (scvalue<Effects.EffectDescriptor> "[[EffectName Effect] [LifeTimeOpt None] [Definitions []] [Content [Contents [Shift 0] [[StaticSprite [Resource Default Image] [] Nil]]]]]")]
 
 /// Gives an entity the base behavior of a rigid 2d block using static physics.
 type Block2dDispatcher () =
@@ -305,6 +296,7 @@ type Character2dDispatcher () =
                 RenderSprite
                     { Transform = transform
                       InsetOpt = insetOpt
+                      ClipOpt = ValueNone
                       Image = image
                       Color = Color.One
                       Blend = Transparent
@@ -491,7 +483,9 @@ type Effect3dDispatcher () =
         [typeof<EffectFacet>]
 
     static member Properties =
-        [define Entity.EffectDescriptor (scvalue<Effects.EffectDescriptor> "[[EffectName Effect] [LifeTimeOpt None] [Definitions []] [Content [Contents [Shift 0] [[StaticSprite [Resource Default Image] [] Nil]]]]]")]
+        [define Entity.EffectDescriptor
+            (scvalue<Effects.EffectDescriptor>
+                "[[EffectName Effect] [LifeTimeOpt None] [Definitions []] [Content [Contents [Shift 0] [[Billboard [Resource Default MaterialAlbedo] [Resource Default MaterialRoughness] [Resource Default MaterialMetallic] [Resource Default MaterialAmbientOcclusion] [Resource Default MaterialEmission] [Resource Default MaterialNormal] [Resource Default MaterialHeightMap] False [] Nil]]]]]")]
 
 /// Gives an entity the base behavior of a rigid 3d block using static physics.
 type Block3dDispatcher () =
@@ -556,18 +550,18 @@ type Character3dDispatcher () =
         let turnRightness = if angularVelocity.Y < 0.0f then -angularVelocity.Y * 48.0f else 0.0f
         let turnLeftness = if angularVelocity.Y > 0.0f then angularVelocity.Y * 48.0f else 0.0f
         let animations =
-            [Animation.make 0L None "Armature|Idle" Loop 1.0f 0.5f None]
+            [Animation.make GameTime.zero None "Armature|Idle" Loop 1.0f 0.5f None]
         let animations =
-            if forwardness >= 0.01f then Animation.make 0L None "Armature|WalkForward" Loop 1.0f (max 0.025f forwardness) None :: animations
-            elif backness >= 0.01f then Animation.make 0L None "Armature|WalkBack" Loop 1.0f (max 0.025f backness) None :: animations
+            if forwardness >= 0.01f then Animation.make GameTime.zero None "Armature|WalkForward" Loop 1.0f (max 0.025f forwardness) None :: animations
+            elif backness >= 0.01f then Animation.make GameTime.zero None "Armature|WalkBack" Loop 1.0f (max 0.025f backness) None :: animations
             else animations
         let animations =
-            if rightness >= 0.01f then Animation.make 0L None "Armature|WalkRight" Loop 1.0f (max 0.025f rightness) None :: animations
-            elif leftness >= 0.01f then Animation.make 0L None "Armature|WalkLeft" Loop 1.0f (max 0.025f leftness) None :: animations
+            if rightness >= 0.01f then Animation.make GameTime.zero None "Armature|WalkRight" Loop 1.0f (max 0.025f rightness) None :: animations
+            elif leftness >= 0.01f then Animation.make GameTime.zero None "Armature|WalkLeft" Loop 1.0f (max 0.025f leftness) None :: animations
             else animations
         let animations =
-            if turnRightness >= 0.01f then Animation.make 0L None "Armature|TurnRight" Loop 1.0f (max 0.025f turnRightness) None :: animations
-            elif turnLeftness >= 0.01f then Animation.make 0L None "Armature|TurnLeft" Loop 1.0f (max 0.025f turnLeftness) None :: animations
+            if turnRightness >= 0.01f then Animation.make GameTime.zero None "Armature|TurnRight" Loop 1.0f (max 0.025f turnRightness) None :: animations
+            elif turnLeftness >= 0.01f then Animation.make GameTime.zero None "Armature|TurnLeft" Loop 1.0f (max 0.025f turnLeftness) None :: animations
             else animations
         let world = entity.SetAnimations (List.toArray animations) world
         let world = entity.SetLinearVelocityPrevious linearVelocityAvg world
@@ -619,7 +613,7 @@ type Nav3dConfigDispatcher () =
 
     override this.Edit (op, entity, world) =
         match op with
-        | OverlayViewport _ ->
+        | ViewportOverlay _ ->
             let nav3d = World.getScreenNav3d entity.Screen world
             match nav3d.Nav3dMeshOpt with
             | Some (nbrData, _, _) ->

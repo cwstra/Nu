@@ -36,7 +36,7 @@ module TmxMap =
               <properties>
                <property name="Image" value="[Default TileSet]"/>
               </properties>
-              <image source="TileSet.bmp" trans="ff00ff" width="384" height="434"/>
+              <image source="TileSet.png" trans="ff00ff" width="384" height="434"/>
               <tile id="0"><properties><property name="C" value=""/></properties></tile>
               <tile id="1"><properties><property name="C" value=""/></properties></tile>
               <tile id="2"><properties><property name="C" value=""/></properties></tile>
@@ -318,6 +318,7 @@ module TmxMap =
               CollisionMask = Physics.categorizeCollisionMask collisionMask
               Sensor = false
               Observable = observable
+              Awake = false
               BodyIndex = bodyIndex }
         bodyProperties
 
@@ -404,14 +405,16 @@ module TmxMap =
                             xO <- xO + tileSize.X
 
                         // compute strip transform
-                        let mutable transform = Transform.makeDefault false
-                        transform.Position <- v3 (xS - modulus r.X tileSize.X) (single yC * tileSize.Y - modulus r.Y tileSize.Y) 0.0f + viewBounds.Min.V3
-                        transform.Size <- v3 (single tiles.Length * tileSize.X) tileSize.Y 0.0f
+                        let stripSize = v3 (single tiles.Length * tileSize.X) tileSize.Y 0.0f
+                        let stripPosition = v3 (xS - modulus r.X tileSize.X) (single yC * tileSize.Y - modulus r.Y tileSize.Y) 0.0f + viewBounds.Min.V3 + stripSize * 0.5f
+                        let mutable transform = Transform.makeDefault ()
+                        transform.Position <- stripPosition
+                        transform.Size <- stripSize
                         transform.Elevation <- elevation
                         transform.Absolute <- absolute
 
                         // check if strip in view bounds
-                        let stripBounds = box2 transform.Position.V2 transform.Size.V2
+                        let stripBounds = box2 transform.PerimeterMin.V2 transform.Size.V2
                         if stripBounds.Intersects viewBounds then
 
                             // accumulate descriptor
@@ -422,6 +425,7 @@ module TmxMap =
                                   RenderOperation2d =
                                     RenderTiles
                                         { Transform = transform
+                                          ClipOpt = ValueNone // TODO: implement clipping for tile maps.
                                           Color = tileMapColor
                                           Emission = tileMapEmission
                                           MapSize = Vector2i (tileMap.Width, tileMap.Height)

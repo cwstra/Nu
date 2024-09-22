@@ -61,7 +61,8 @@ packages/
 ##########
 .idea
 
-##################
-# Nu Local Items #
-##################
+#######################
+# Nu Local Test Items #
+#######################
 /Nu/Nu.Gaia/TestGroups
+/Nu/Nu.Gaia/Assets/Default/TestAssets

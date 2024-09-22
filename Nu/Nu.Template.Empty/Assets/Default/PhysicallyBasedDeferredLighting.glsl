@@ -1,8 +1,8 @@
 #shader vertex
 #version 410
 
-layout (location = 0) in vec3 position;
-layout (location = 1) in vec2 texCoords;
+layout(location = 0) in vec3 position;
+layout(location = 1) in vec2 texCoords;
 
 out vec2 texCoordsOut;
 
@@ -17,38 +17,53 @@ void main()
 
 const float PI = 3.141592654;
 const float REFLECTION_LOD_MAX = 7.0;
-const float GAMMA = 2.2;
 const float ATTENUATION_CONSTANT = 1.0;
-const int LIGHTS_MAX = 64;
-const float SHADOW_FOV_MAX = 2.1;
+const int LIGHTS_MAX = 32;
 const int SHADOWS_MAX = 16;
+const float SHADOW_FOV_MAX = 2.1;
+const float SHADOW_SEAM_INSET = 0.001;
+const vec4 SSVF_DITHERING[4] =
+vec4[4](
+    vec4(0.0, 0.5, 0.125, 0.625),
+    vec4(0.75, 0.22, 0.875, 0.375),
+    vec4(0.1875, 0.6875, 0.0625, 0.5625),
+    vec4(0.9375, 0.4375, 0.8125, 0.3125));
 
 uniform vec3 eyeCenter;
 uniform mat4 view;
 uniform mat4 projection;
 uniform float lightCutoffMargin;
-uniform vec3 lightAmbientColor;
-uniform float lightAmbientBrightness;
-uniform float lightShadowBiasAcne;
-uniform float lightShadowBiasBleed;
+uniform float lightShadowExponent;
+uniform float lightShadowDensity;
+uniform float lightShadowBleedFilter;
+uniform float lightShadowVarianceMin;
+uniform int ssvfEnabled;
+uniform int ssvfSteps;
+uniform float ssvfAsymmetry;
+uniform float ssvfIntensity;
 uniform int ssrEnabled;
 uniform float ssrDetail;
-uniform float ssrDepthMax;
-uniform float ssrDistanceMax;
 uniform int ssrRefinementsMax;
-uniform float ssrRoughnessMax;
-uniform float ssrSurfaceSlopeMax;
-uniform float ssrRayThicknessMarch;
-uniform float ssrRayThicknessRefinement;
-uniform float ssrFilterCutoff;
-uniform float ssrEdgeCutoffHorizontal;
-uniform float ssrEdgeCutoffVertical;
+uniform float ssrRayThickness;
+uniform float ssrTowardEyeCutoff;
+uniform float ssrDepthCutoff;
+uniform float ssrDepthCutoffMargin;
+uniform float ssrDistanceCutoff;
+uniform float ssrDistanceCutoffMargin;
+uniform float ssrRoughnessCutoff;
+uniform float ssrRoughnessCutoffMargin;
+uniform float ssrSlopeCutoff;
+uniform float ssrSlopeCutoffMargin;
+uniform float ssrEdgeHorizontalMargin;
+uniform float ssrEdgeVerticalMargin;
 uniform vec3 ssrLightColor;
+uniform float ssrLightBrightness;
 uniform sampler2D positionTexture;
 uniform sampler2D albedoTexture;
 uniform sampler2D materialTexture;
 uniform sampler2D normalPlusTexture;
 uniform sampler2D brdfTexture;
+uniform sampler2D ambientTexture;
 uniform sampler2D irradianceTexture;
 uniform sampler2D environmentFilterTexture;
 uniform sampler2D ssaoTexture;
@@ -69,7 +84,9 @@ uniform mat4 shadowMatrices[SHADOWS_MAX];
 
 in vec2 texCoordsOut;
 
-layout(location = 0) out vec4 frag;
+layout(location = 0) out vec4 color;
+layout(location = 1) out vec4 fogAccum;
+layout(location = 2) out float depth;
 
 float linstep(float low, float high, float v)
 {
@@ -79,16 +96,6 @@ float linstep(float low, float high, float v)
 vec3 rotate(vec3 axis, float angle, vec3 v)
 {
     return mix(dot(axis, v) * axis, v, cos(angle)) + cross(axis, v) * sin(angle);
-}
-
-float computeShadowScalar(sampler2D shadowMap, vec2 shadowTexCoords, float shadowZ, float varianceMin, float lightBleedFilter)
-{
-    vec2 moments = texture(shadowMap, shadowTexCoords).xy;
-    float p = step(shadowZ, moments.x);
-    float variance = max(moments.y - moments.x * moments.x, varianceMin);
-    float stepLength = shadowZ - moments.x;
-    float pMax = linstep(lightBleedFilter, 1.0, variance / (variance + stepLength * stepLength));
-    return max(p, pMax);
 }
 
 float fadeShadowScalar(vec2 shadowTexCoords, float shadowScalar)
@@ -141,7 +148,90 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 f0, float roughness)
     return f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-void ssr(vec4 position, vec3 albedo, float roughness, float metallic, vec3 normal, out vec3 specularSS, out float specularWeight)
+float depthViewToDepthBuffer(float depthView)
+{
+    // compute near and far planes (these _should_ get baked down to fragment constants)
+    float p2z = projection[2].z;
+    float p2w = projection[2].w;
+    float nearPlane = p2w / (p2z - 1.0);
+    float farPlane = p2w / (p2z + 1.0);
+
+    // compute depth
+    return (-depthView - nearPlane) / (farPlane - nearPlane);
+}
+
+float computeShadowScalar(vec4 position, bool lightDirectional, float lightConeOuter, mat4 shadowMatrix, sampler2D shadowTexture)
+{
+    vec4 positionShadow = shadowMatrix * position;
+    vec3 shadowTexCoordsProj = positionShadow.xyz / positionShadow.w;
+    if (shadowTexCoordsProj.x >= -1.0 + SHADOW_SEAM_INSET && shadowTexCoordsProj.x < 1.0 - SHADOW_SEAM_INSET &&
+        shadowTexCoordsProj.y >= -1.0 + SHADOW_SEAM_INSET && shadowTexCoordsProj.y < 1.0 - SHADOW_SEAM_INSET &&
+        shadowTexCoordsProj.z >= -1.0 + SHADOW_SEAM_INSET && shadowTexCoordsProj.z < 1.0 - SHADOW_SEAM_INSET)
+    {
+        vec2 shadowTexCoords = shadowTexCoordsProj.xy * 0.5 + 0.5;
+        float shadowZ = !lightDirectional ? shadowTexCoordsProj.z * 0.5 + 0.5 : shadowTexCoordsProj.z;
+        float shadowZExp = exp(-lightShadowExponent * shadowZ);
+        float shadowDepthExp = texture(shadowTexture, shadowTexCoords).y;
+        float shadowScalar = clamp(shadowZExp * shadowDepthExp, 0.0, 1.0);
+        shadowScalar = pow(shadowScalar, lightShadowDensity);
+        shadowScalar = lightConeOuter > SHADOW_FOV_MAX ? fadeShadowScalar(shadowTexCoords, shadowScalar) : shadowScalar;
+        return shadowScalar;
+    }
+    return 1.0;
+}
+
+vec3 computeFogAccumDirectional(vec4 position, int lightIndex)
+{
+    vec3 result = vec3(0.0);
+    int shadowIndex = lightShadowIndices[lightIndex];
+    if (lightsCount > 0 && lightDirectionals[lightIndex] != 0 && shadowIndex >= 0)
+    {
+        // compute shadow space
+        mat4 shadowMatrix = shadowMatrices[shadowIndex];
+
+        // compute ray info
+        vec3 startPosition = eyeCenter;
+        vec3 stopPosition = position.xyz;
+        vec3 rayVector = stopPosition - startPosition;
+        float rayLength = length(rayVector);
+        vec3 rayDirection = rayVector / rayLength;
+
+        // compute step info
+        float stepLength = rayLength / ssvfSteps;
+        vec3 step = rayDirection * stepLength;
+
+        // compute light view term
+        float theta = dot(-rayDirection, lightDirections[lightIndex]);
+
+        // compute dithering
+        float dithering = SSVF_DITHERING[int(gl_FragCoord.x) % 4][int(gl_FragCoord.y) % 4];
+
+        // march over ray, accumulating fog light value
+        vec3 currentPosition = startPosition + step * dithering;
+        for (int i = 0; i < ssvfSteps; i++)
+        {
+            // step through ray, accumulating fog light moment
+            vec4 positionShadow = shadowMatrix * vec4(currentPosition, 1.0);
+            vec3 shadowTexCoordsProj = positionShadow.xyz / positionShadow.w;
+            vec2 shadowTexCoords = vec2(shadowTexCoordsProj.x, shadowTexCoordsProj.y) * 0.5 + 0.5;
+            bool shadowTexCoordsInRange = shadowTexCoords.x >= 0.0 && shadowTexCoords.x < 1.0 && shadowTexCoords.y >= 0.0 && shadowTexCoords.y < 1.0;
+            float shadowZ = shadowTexCoordsProj.z * 0.5 + 0.5;
+            float shadowDepth = shadowTexCoordsInRange ? texture(shadowTextures[shadowIndex], shadowTexCoords).x : 1.0;
+            if (shadowZ <= shadowDepth || shadowZ >= 1.0f)
+            {
+                // mie scaterring approximated with Henyey-Greenstein phase function
+                float asymmetrySquared = ssvfAsymmetry * ssvfAsymmetry;
+                float fogMoment = (1.0 - asymmetrySquared) / (4.0 * PI * pow(1.0 + asymmetrySquared - 2.0 * ssvfAsymmetry * theta, 1.5));
+                result += fogMoment;
+            }
+            currentPosition += step;
+        }
+        result = smoothstep(0.0, 1.0, result / ssvfSteps) * lightColors[lightIndex] * lightBrightnesses[lightIndex] * ssvfIntensity;
+    }
+    return result;
+}
+
+void computeSsr(vec4 position, vec3 albedo, float roughness, float metallic, vec3 normal, float slope, out vec3 specularScreen, out float specularScreenWeight)
 {
     // compute view values
     vec4 positionView = view * position;
@@ -149,7 +239,8 @@ void ssr(vec4 position, vec3 albedo, float roughness, float metallic, vec3 norma
     vec3 normalView = mat3(view) * normal;
     vec3 reflectionView = reflect(positionViewNormal, normalView);
     vec4 startView = vec4(positionView.xyz, 1.0);
-    vec4 stopView = vec4(positionView.xyz + reflectionView * ssrDistanceMax, 1.0);
+    vec4 stopView = vec4(positionView.xyz + reflectionView * ssrDistanceCutoff, 1.0);
+    float eyeDistanceFromPlane = abs(dot(normalView, positionView.xyz));
 
     // compute the fragment at which to start marching
     vec2 texSize = textureSize(positionTexture, 0).xy;
@@ -158,101 +249,101 @@ void ssr(vec4 position, vec3 albedo, float roughness, float metallic, vec3 norma
     startFrag = startFrag * 0.5 + 0.5;
     startFrag *= texSize;
 
-    // compute the fragment at which to end marching
+    // compute the fragment at which to end marching as well as total length
     vec4 stopFrag4 = projection * stopView;
     vec2 stopFrag = stopFrag4.xy / stopFrag4.w;
     stopFrag = stopFrag * 0.5 + 0.5;
     stopFrag *= texSize;
+    float lengthFrag = length(stopFrag - startFrag);
 
     // initialize current fragment
     vec2 currentFrag = startFrag;
-    vec2 currentUV = currentFrag / texSize;
+    vec2 currentTexCoords = currentFrag / texSize;
+    vec4 currentPosition = position;
     vec4 currentPositionView = positionView;
 
     // compute fragment step amount
-    float marchHorizonal = stopFrag.x - startFrag.x;
+    float marchHorizontal = stopFrag.x - startFrag.x;
     float marchVertical = stopFrag.y - startFrag.y;
-    float shouldMarchHorizontal = abs(marchHorizonal) >= abs(marchVertical) ? 1.0 : 0.0;
-    float stepLength = mix(abs(marchVertical), abs(marchHorizonal), shouldMarchHorizontal) * ssrDetail;
-    vec2 stepAmount = vec2(marchHorizonal, marchVertical) / max(stepLength, 0.001);
+    bool shouldMarchHorizontal = abs(marchHorizontal) >= abs(marchVertical);
+    float stepCount = abs(shouldMarchHorizontal ? marchHorizontal : marchVertical) * ssrDetail;
+    vec2 stepAmount = vec2(marchHorizontal, marchVertical) / max(stepCount, 0.001);
 
     // march fragment
-    float searchA = 0.0;
-    float searchB = 0.0;
-    float currentDistanceView = 0.0;
+    float currentProgressA = 0.0;
+    float currentProgressB = 0.0;
     float currentDepthView = 0.0;
-    for (int i = 0; i < int(stepLength) && currentUV.x >= 0.0 && currentUV.x <= 1.0 && currentUV.y >= 0.0 && currentUV.y <= 1.0; ++i)
+    for (int i = 0; i < stepCount && currentTexCoords.x >= 0.0 && currentTexCoords.x < 1.0 && currentTexCoords.y >= 0.0 && currentTexCoords.y < 1.0; ++i)
     {
-        // step fragment
+        // advance frag values
         currentFrag += stepAmount;
-        currentUV = currentFrag / texSize;
+        currentTexCoords = currentFrag / texSize;
+        currentPosition = texture(positionTexture, currentTexCoords);
+        currentPositionView = view * currentPosition;
+        currentProgressB = length(currentFrag - startFrag) / lengthFrag;
+        currentDepthView = -startView.z * -stopView.z / max(0.00001, mix(-stopView.z, -startView.z, currentProgressB)); // NOTE: uses perspective correct interpolation for depth, but causes precision issues as ssrDistanceCutoff increases.
 
-        // determine whether we're in geometry
-        vec4 currentPosition = texture(positionTexture, currentUV);
-        if (currentPosition.w == 1.0)
+        // compute depth delta and thickness based on view state
+        float depthDelta = currentDepthView - -currentPositionView.z;
+        float thickness = max(-currentPositionView.z * ssrRayThickness, ssrRayThickness);
+        if (-currentPositionView.z > 3.0 && eyeDistanceFromPlane < 1.0)
+            thickness = max(1.0 - eyeDistanceFromPlane + ssrRayThickness, thickness);
+
+        // determine whether we hit geometry within acceptable thickness
+        if (currentPosition.w == 1.0 && depthDelta >= 0.0 && depthDelta <= thickness)
         {
-            // determine whether we hit geometry within acceptable thickness
-            currentPositionView = view * currentPosition;
-            searchB = clamp(mix((currentFrag.y - startFrag.y) / marchVertical, (currentFrag.x - startFrag.x) / marchHorizonal, shouldMarchHorizontal), 0.0, 1.0);
-            currentDistanceView = -startView.z * -stopView.z / mix(-stopView.z, -startView.z, searchB); // uses perspective correct interpolation for depth
-            currentDepthView = currentDistanceView - -currentPositionView.z;
-            float adaptedThickness = max(currentDistanceView * ssrRayThicknessMarch, ssrRayThicknessMarch);
-            if (currentDepthView >= 0.0 && currentDepthView <= adaptedThickness)
+            // perform refinements within walk
+            currentProgressB = currentProgressA + (currentProgressB - currentProgressA) * 0.5;
+            for (int j = 0; j < ssrRefinementsMax; ++j)
             {
-                // perform refinements within walk
-                searchB = searchA + (searchB - searchA) * 0.5;
-                for (int i = 0; i < ssrRefinementsMax; ++i)
+                // advance frag values
+                currentFrag = mix(startFrag, stopFrag, currentProgressB);
+                currentTexCoords = currentFrag / texSize;
+                currentPosition = texture(positionTexture, currentTexCoords);
+                currentPositionView = view * currentPosition;
+                currentDepthView = -startView.z * -stopView.z / max(0.00001, mix(-stopView.z, -startView.z, currentProgressB)); // NOTE: uses perspective correct interpolation for depth, but causes precision issues as ssrDistanceCutoff increases.
+
+                // compute depth delta and thickness based on view state
+                float depthDelta = currentDepthView - -currentPositionView.z;
+                float thickness = max(-currentPositionView.z * ssrRayThickness, ssrRayThickness);
+                if (-currentPositionView.z > 3.0 && eyeDistanceFromPlane < 1.0)
+                    thickness = max(1.0 - eyeDistanceFromPlane + ssrRayThickness, thickness);
+
+                // determine whether we hit geometry within acceptable thickness
+                if (currentPosition.w == 1.0 && depthDelta >= 0.0 && depthDelta <= thickness)
                 {
-                    // refine fragment
-                    currentFrag = mix(startFrag, stopFrag, searchB);
-                    currentUV = currentFrag / texSize;
-
-                    // determine whether we're in geometry
-                    vec4 currentPosition = texture(positionTexture, currentUV);
-                    if (currentPosition.w == 1.0)
-                    {
-                        // determine whether we hit geometry within acceptable thickness
-                        currentPositionView = view * currentPosition;
-                        currentDistanceView = -startView.z * -stopView.z / mix(-stopView.z, -startView.z, searchB); // uses perspective correct interpolation for depth
-                        currentDepthView = currentDistanceView - -currentPositionView.z;
-                        float adaptedThickness = max(currentDistanceView * ssrRayThicknessRefinement, ssrRayThicknessRefinement);
-                        if (currentDepthView >= 0.0 && currentDepthView <= adaptedThickness)
-                        {
-                            // compute screen-space specular color and weight
-                            searchB = searchA + (searchB - searchA) * 0.5;
-                            vec3 f0 = mix(vec3(0.04), albedo, metallic);
-                            vec3 v = normalize(-positionView.xyz);
-                            vec3 h = normalize(v + normal);
-                            vec3 f = fresnelSchlick(max(dot(h, v), 0.0), f0);
-                            vec3 specularIntensity = f * (1.0 - roughness);
-                            specularSS = vec3(texture(albedoTexture, currentUV).rgb * ssrLightColor * specularIntensity);
-                            vec3 forward = vec3(view[0][2], view[1][2], view[2][2]);
-                            vec3 normalProj = (projection * vec4(normal, 0.0)).xyz; // NOTE: this is an unfamiliar concept to me...
-                            specularWeight =
-                                (1.0 - smoothstep(ssrFilterCutoff, 1.0, max(0.0, dot(forward, normalProj)))) * // filter out as look angles approach forward
-                                (1.0 - smoothstep(ssrFilterCutoff, 1.0, positionView.z / -ssrDepthMax)) * // filter out as fragment reaches max depth
-                                (1.0 - smoothstep(ssrFilterCutoff, 1.0, length(currentPositionView - positionView) / ssrDistanceMax)) * // filter out as reflection point reaches max distance from fragment
-                                smoothstep(0.0, ssrEdgeCutoffHorizontal, min(currentUV.x, 1.0 - currentUV.x)) *
-                                smoothstep(0.0, ssrEdgeCutoffVertical, min(currentUV.y, 1.0 - currentUV.y));
-                            specularWeight = clamp(specularWeight, 0.0, 1.0);
-                            break;
-                        }
-                    }
-
-                    // otherwise continue in the same direction
-                    float temp = searchB;
-                    searchB = searchB + (searchB - searchA) * 0.5;
-                    searchA = temp;
+                    // compute screen-space specular color and weight
+                    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+                    vec3 v = normalize(-positionView.xyz);
+                    vec3 h = normalize(v + normal);
+                    vec3 f = fresnelSchlick(max(dot(h, v), 0.0), f0);
+                    vec3 specularIntensity = f * (1.0 - roughness);
+                    specularScreen = vec3(texture(albedoTexture, currentTexCoords).rgb * ssrLightColor * ssrLightBrightness * specularIntensity);
+                    specularScreenWeight =
+                        (1.0 - smoothstep(1.0 - ssrRoughnessCutoffMargin, 1.0, roughness / ssrRoughnessCutoff)) * // filter out as fragment reaches max roughness
+                        (1.0 - smoothstep(1.0 - ssrDepthCutoffMargin, 1.0, positionView.z / -ssrDepthCutoff)) * // filter out as fragment reaches max depth
+                        (1.0 - smoothstep(1.0 - ssrDistanceCutoffMargin, 1.0, length(currentPositionView - positionView) / ssrDistanceCutoff)) * // filter out as reflection point reaches max distance from fragment
+                        (1.0 - smoothstep(1.0 - ssrSlopeCutoffMargin, 1.0, slope / ssrSlopeCutoff)) * // filter out as slope nears cutoff
+                        smoothstep(0.0, 1.0, eyeDistanceFromPlane) * // filter out as eye nears plane
+                        smoothstep(0.0, ssrEdgeHorizontalMargin, min(currentTexCoords.x, 1.0 - currentTexCoords.x)) *
+                        smoothstep(0.0, ssrEdgeVerticalMargin, min(currentTexCoords.y, 1.0 - currentTexCoords.y));
+                    specularScreenWeight = clamp(specularScreenWeight, 0.0, 1.0);
+                    break;
                 }
 
-                // fin
-                break;
+                // continue in the same direction
+                float temp = currentProgressB;
+                currentProgressB = currentProgressB + (currentProgressB - currentProgressA) * 0.5;
+                currentProgressA = temp;
             }
-        }
 
-        // otherwise loop
-        searchA = searchB;
+            // fin
+            break;
+        }
     }
+
+    // otherwise loop
+    currentProgressA = currentProgressB;
 }
 
 void main()
@@ -267,6 +358,7 @@ void main()
         vec3 normal = texture(normalPlusTexture, texCoordsOut).xyz;
 
         // retrieve data from intermediate buffers
+        vec4 ambientColorAndBrightness = texture(ambientTexture, texCoordsOut);
         vec3 irradiance = texture(irradianceTexture, texCoordsOut).rgb;
         vec3 environmentFilter = texture(environmentFilterTexture, texCoordsOut).rgb;
         float ssao = texture(ssaoTexture, texCoordsOut).r;
@@ -277,15 +369,17 @@ void main()
         float ambientOcclusion = material.b * ssao;
         vec3 emission = vec3(material.a);
 
-        // compute lightAccum term
+        // compute light accumulation
         vec3 v = normalize(eyeCenter - position.xyz);
+        float nDotV = max(dot(normal, v), 0.0);
         vec3 f0 = mix(vec3(0.04), albedo, metallic); // if dia-electric (plastic) use f0 of 0.04f and if metal, use the albedo color as f0.
         vec3 lightAccum = vec3(0.0);
         for (int i = 0; i < lightsCount; ++i)
         {
             // per-light radiance
+            bool lightDirectional = lightDirectionals[i] == 1;
             vec3 l, h, radiance;
-            if (lightDirectionals[i] == 0)
+            if (!lightDirectional)
             {
                 vec3 d = lightOrigins[i] - position.xyz;
                 l = normalize(d);
@@ -313,28 +407,21 @@ void main()
 
             // shadow scalar
             int shadowIndex = lightShadowIndices[i];
-            float shadowScalar = 1.0;
-            if (shadowIndex >= 0)
-            {
-                vec4 positionShadow = shadowMatrices[shadowIndex] * position;
-                vec3 shadowTexCoordsProj = positionShadow.xyz / positionShadow.w;
-                vec2 shadowTexCoords = vec2(shadowTexCoordsProj.x, shadowTexCoordsProj.y) * 0.5 + 0.5;
-                float shadowZ = shadowTexCoordsProj.z * 0.5 + 0.5;
-                if (shadowZ < 1.0f && shadowTexCoords.x >= 0.0 && shadowTexCoords.x <= 1.0 && shadowTexCoords.y >= 0.0 && shadowTexCoords.y <= 1.0)
-                {
-                    shadowScalar = computeShadowScalar(shadowTextures[shadowIndex], shadowTexCoords, shadowZ, lightShadowBiasAcne, lightShadowBiasBleed);
-                    if (lightConeOuters[i] > SHADOW_FOV_MAX) shadowScalar = fadeShadowScalar(shadowTexCoords, shadowScalar);
-                }
-            }
+            float shadowScalar =
+                shadowIndex >= 0 ?
+                computeShadowScalar(position, lightDirectional, lightConeOuters[i], shadowMatrices[shadowIndex], shadowTextures[shadowIndex]) :
+                1.0;
 
             // cook-torrance brdf
+            float hDotV = max(dot(h, v), 0.0);
             float ndf = distributionGGX(normal, h, roughness);
             float g = geometrySchlick(normal, v, l, roughness);
-            vec3 f = fresnelSchlick(max(dot(h, v), 0.0), f0);
+            vec3 f = fresnelSchlick(hDotV, f0);
 
             // compute specularity
             vec3 numerator = ndf * g * f;
-            float denominator = 4.0 * max(dot(normal, v), 0.0) * max(dot(normal, l), 0.0) + 0.0001; // add epsilon to prevent division by zero
+            float nDotL = max(dot(normal, l), 0.0);
+            float denominator = 4.0 * nDotV * nDotL + 0.0001; // add epsilon to prevent division by zero
             vec3 specular = numerator / denominator;
 
             // compute diffusion
@@ -342,60 +429,51 @@ void main()
             vec3 kD = vec3(1.0) - kS;
             kD *= 1.0 - metallic;
 
-            // compute light scalar
-            float nDotL = max(dot(normal, l), 0.0);
-
             // add to outgoing lightAccum
             lightAccum += (kD * albedo / PI + specular) * radiance * nDotL * shadowScalar;
         }
 
-        // compute light ambient terms
-        // NOTE: lightAmbientSpecular gets an additional ao multiply for some specular occlusion.
+        // compute ambient terms
+        // NOTE: ambientSpecular gets an additional ao multiply for some specular occlusion.
         // TODO: use a better means of computing specular occlusion as this one isn't very effective.
-        vec3 lightAmbientDiffuse = lightAmbientColor * lightAmbientBrightness * ambientOcclusion;
-        vec3 lightAmbientSpecular = lightAmbientDiffuse * ambientOcclusion;
+        vec3 ambientColor = ambientColorAndBrightness.rgb;
+        float ambientBrightness = ambientColorAndBrightness.a;
+        vec3 ambientDiffuse = ambientColor * ambientBrightness * ambientOcclusion;
+        vec3 ambientSpecular = ambientDiffuse * ambientOcclusion;
 
         // compute diffuse term
-        vec3 f = fresnelSchlickRoughness(max(dot(normal, v), 0.0), f0, roughness);
+        vec3 f = fresnelSchlickRoughness(nDotV, f0, roughness);
         vec3 kS = f;
         vec3 kD = 1.0 - kS;
         kD *= 1.0 - metallic;
-        vec3 diffuse = kD * irradiance * albedo * lightAmbientDiffuse;
-
-        // compute specular term from light map
-        vec2 environmentBrdf = texture(brdfTexture, vec2(max(dot(normal, v), 0.0), roughness)).rg;
-        vec3 specularSubterm = f * environmentBrdf.x + environmentBrdf.y;
-        vec3 specularLM = environmentFilter * specularSubterm * lightAmbientSpecular;
+        vec3 diffuse = kD * irradiance * albedo * ambientDiffuse;
 
         // compute specular term and weight from screen-space
-        vec3 specularSS = vec3(0.0);
-        float specularWeight = 0.0;
-        float surfaceSlope = 1.0 - abs(dot(normal, vec3(0.0, 1.0, 0.0)));
+        vec3 forward = vec3(view[0][2], view[1][2], view[2][2]);
+        float towardEye = dot(forward, normal);
+        float slope = 1.0 - abs(dot(normal, vec3(0.0, 1.0, 0.0)));
         vec4 positionView = view * position;
-        if (ssrEnabled == 1 && roughness <= ssrRoughnessMax && surfaceSlope <= ssrSurfaceSlopeMax && -positionView.z <= ssrDepthMax)
+        vec3 specularScreen = vec3(0.0);
+        float specularScreenWeight = 0.0;
+        if (ssrEnabled == 1 && towardEye <= ssrTowardEyeCutoff && -positionView.z <= ssrDepthCutoff && roughness <= ssrRoughnessCutoff && slope <= ssrSlopeCutoff)
         {
             vec2 texSize = textureSize(positionTexture, 0).xy;
             float texelHeight = 1.0 / texSize.y;
             vec2 texCoordsBelow = texCoordsOut + vec2(0.0, -texelHeight); // using tex coord below current pixel reduces 'cracks' on floor reflections
             texCoordsBelow.y = max(0.0, texCoordsBelow.y);
             vec4 positionBelow = texture(positionTexture, texCoordsBelow);
-            ssr(positionBelow, albedo, roughness, metallic, normal, specularSS, specularWeight);
+            computeSsr(positionBelow, albedo, roughness, metallic, normal, slope, specularScreen, specularScreenWeight);
         }
 
         // compute specular term
-        vec3 specular = (1.0 - specularWeight) * specularLM + specularWeight * specularSS;
+        vec2 environmentBrdf = texture(brdfTexture, vec2(nDotV, roughness)).rg;
+        vec3 specularEnvironmentSubterm = f * environmentBrdf.x + environmentBrdf.y;
+        vec3 specularEnvironment = environmentFilter * specularEnvironmentSubterm * ambientSpecular;
+        vec3 specular = (1.0 - specularScreenWeight) * specularEnvironment + specularScreenWeight * specularScreen;
 
-        // compute ambient term
-        vec3 ambient = diffuse + specular;
-
-        // compute color w/ tone mapping, gamma correction, and emission
-        vec3 color = lightAccum + ambient;
-        color = color / (color + vec3(1.0));
-        color = pow(color, vec3(1.0 / GAMMA));
-        color = color + emission * albedo;
-
-        // write color
-        frag = vec4(color, 1.0);
+        // write lighting values
+        color = vec4(lightAccum + diffuse + emission * albedo + specular, 1.0);
+        fogAccum = ssvfEnabled == 1 ? vec4(computeFogAccumDirectional(position, 0), 1.0) : vec4(0.0);
+        depth = depthViewToDepthBuffer(positionView.z);
     }
-    else frag = vec4(0.0); // write zero
 }

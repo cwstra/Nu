@@ -58,12 +58,12 @@ module Content =
                 // subscribe to added events
                 let world =
                     List.foldGeneric (fun world ((eventAddress : obj Address, signalObj), subscriptionId) ->
-                        let eventAddress = if eventAddress.Anonymous then eventAddress --> simulant.SimulantAddress else eventAddress
+                        let eventAddress = if eventAddress.Anonymous then eventAddress --> itoa simulant.SimulantAddress else eventAddress
                         let (unsubscribe, world) = World.subscribePlus subscriptionId (signalHandler signalObj origin) eventAddress origin world
                         let world =
                             World.monitor
                                 (fun _ world -> (Cascade, unsubscribe world))
-                                (Events.UnregisteringEvent --> simulant.SimulantAddress)
+                                (Events.UnregisteringEvent --> itoa simulant.SimulantAddress)
                                 simulant
                                 world
                         world)
@@ -108,12 +108,12 @@ module Content =
                 // subscribe to added handlers
                 let world =
                     List.foldGeneric (fun world ((_, eventAddress : obj Address), (subscriptionId, handler)) ->
-                        let eventAddress = if eventAddress.Anonymous then eventAddress --> simulant.SimulantAddress else eventAddress
+                        let eventAddress = if eventAddress.Anonymous then eventAddress --> itoa simulant.SimulantAddress else eventAddress
                         let (unsubscribe, world) = World.subscribePlus subscriptionId (signalHandlerHandler handler origin) eventAddress origin world
                         let world =
                             World.monitor
                                 (fun _ world -> (Cascade, unsubscribe world))
-                                (Events.UnregisteringEvent --> simulant.SimulantAddress)
+                                (Events.UnregisteringEvent --> itoa simulant.SimulantAddress)
                                 simulant
                                 world
                         world)
@@ -412,7 +412,7 @@ module Content =
     /// Describe an association of gui entities with the given definitions and content.
     let association entityName definitions content = composite<GuiDispatcher> entityName definitions content
 
-    /// Describe a text with the given definitions.
+    /// Describe a text entity with the given definitions.
     let text entityName definitions = entity<TextDispatcher> entityName definitions
 
     /// Describe a label with the given definitions.
@@ -433,7 +433,7 @@ module Content =
     /// Describe a feeler with the given definitions.
     let feeler entityName definitions = entity<FeelerDispatcher> entityName definitions
 
-    /// Describe an fps gui with the given definitions.
+    /// Describe an fps entity with the given definitions.
     let fps entityName definitions = entity<FpsDispatcher> entityName definitions
 
     /// Describe a panel with the given definitions and content.

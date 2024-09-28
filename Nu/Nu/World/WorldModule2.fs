@@ -1640,6 +1640,7 @@ module WorldModule2 =
 
         static member private processInput world =
             if SDL.SDL_WasInit SDL.SDL_INIT_TIMER <> 0u then
+                KeyboardState.updateState ()
                 let mutable result = (World.getLiveness world, world)
                 let mutable polledEvent = SDL.SDL_Event ()
                 while
@@ -2884,10 +2885,12 @@ module ScreenDispatcherModule =
     type World with
 
         /// Begin the ImNui declaration of a screen with the given arguments using a child group read from the given file path.
+        /// Note that changing the file path over time has no effect as only the first moment is used.
         static member beginScreenWithGroupFromFilePlus<'d, 'r when 'd :> ScreenDispatcher> (zero : 'r) init name select behavior groupFilePath world args =
             World.beginScreenPlus10<'d, 'r> zero init World.transitionScreen World.setScreenSlide name select behavior (Some groupFilePath) world args
 
         /// Begin the ImNui declaration of a screen with the given arguments using a child group read from the given file path.
+        /// Note that changing the file path over time has no effect as only the first moment is used.
         static member beginScreenWithGroupFromFile<'d when 'd :> ScreenDispatcher> name select behavior groupFilePath world args =
             World.beginScreen8<'d> World.transitionScreen World.setScreenSlide name select behavior (Some groupFilePath) world args
 

@@ -50,11 +50,11 @@ type MyGameDispatcher () =
         let world = World.beginPanel "Panel" [Entity.Position .= v3 -128.0f 0.0f 0.0f; Entity.Layout .= Flow (FlowDownward, FlowUnlimited)] world
         let world = World.doText "Collisions" [Entity.Text @= "Collisions: " + string myGame.Collisions] world
         let world =
-            match World.doButton "Jump!" [Entity.Text .= "Jump!"; Entity.EnabledLocal @= World.getBodyGrounded box3dBodyId world] world with
+            match World.doButton "Jump!" [Entity.EnabledLocal @= World.getBodyGrounded box3dBodyId world; Entity.Text .= "Jump!"] world with
             | (true, world) -> World.applyBodyLinearImpulse (v3Up * 12.0f) None box3dBodyId world
             | (false, world) -> world
-        let world = World.doFillBar "FillBar" [Entity.Fill @= single myGame.Collisions / 25.0f] world
-        let world = if myGame.Collisions >= 25 then World.doText "Full!" [Entity.Text .= "Full!"] world else world
+        let world = World.doFillBar "FillBar" [Entity.Fill @= single myGame.Collisions / 10.0f] world
+        let world = if myGame.Collisions >= 10 then World.doText "Full!" [Entity.Text .= "Full!"] world else world
         let world = World.endPanel world
 
         // finish declaring group and screen

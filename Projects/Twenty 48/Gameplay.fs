@@ -1,6 +1,7 @@
 ﻿namespace Twenty48
 open System
 open System.Collections.Generic
+open FSharp.Collections
 open System.Numerics
 open Prime
 open Nu
@@ -30,11 +31,11 @@ type GameplayState =
 
 // this is our MMCC model type representing gameplay.
 type Gameplay =
-    { GameplayTime : int64
-      GameplayState : GameplayState
+    { GameplayState : GameplayState
       BoardSize : Vector2i
       Tiles : Tile list
-      Score : int }
+      Score : int
+      PressedDirections: Set<Direction>}
 
     member this.TilesOrdered =
         List.sortBy (fun t -> t.TileId) this.Tiles
@@ -129,6 +130,23 @@ type Gameplay =
         { gameplay with
             Tiles = List.concat rows
             Score = score }
+        
+    static member doShift direction gameplay =
+        if gameplay.GameplayState = Playing false then
+            let shift =
+                match direction with
+                | Upward -> Gameplay.shiftUp
+                | Rightward -> Gameplay.shiftRight
+                | Downward -> Gameplay.shiftDown
+                | Leftward -> Gameplay.shiftLeft
+            let gameplay' = shift gameplay
+            if Gameplay.detectTileChange gameplay gameplay' then
+                let gameplay = Gameplay.addTile gameplay'
+                if not (Gameplay.detectMoveAvailability gameplay)
+                then { gameplay with GameplayState = Playing true }
+                else gameplay
+            else gameplay
+        else gameplay
 
     static member addTile (gameplay : Gameplay) =
         let position = Gen.randomItem gameplay.PositionsUnoccupied
@@ -142,13 +160,13 @@ type Gameplay =
         let movesAvailable = List.filter (fun shift -> Gameplay.detectTileChange gameplay (shift gameplay)) movesPossible
         List.notEmpty movesAvailable
 
-    // this represents the gameplay model in an unutilized state, such as when the gameplay screen is not selected.
+    // this represents the gameplay model in an uninitialized state, such as when the gameplay screen is not selected.
     static member empty =
-        { GameplayTime = 0L
-          GameplayState = Quit
+        { GameplayState = Quit
           BoardSize = v2iDup 4
           Tiles = []
-          Score = 0 }
+          Score = 0
+          PressedDirections = Set.empty }
 
     // this represents the gameplay model in its initial state, such as when gameplay starts.
     static member initial =

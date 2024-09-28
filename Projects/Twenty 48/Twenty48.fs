@@ -12,18 +12,6 @@ type Twenty48 =
     | Credits
     | Gameplay
 
-// this is our top-level MMCC message type.
-type Twenty48Message =
-    | ShowTitle
-    | ShowCredits
-    | ShowGameplay
-    interface Message
-
-// this is our top-level MMCC command type. Commands are used instead of messages when the world is to be transformed.
-type Twenty48Command =
-    | Exit
-    interface Command
-
 // this extends the Game API to expose the above MMCC model as a property.
 [<AutoOpen>]
 module Twenty48Extensions =
@@ -35,41 +23,71 @@ module Twenty48Extensions =
 // this is the dispatcher that customizes the top-level behavior of our game. In here, we create screens as content and
 // bind them up with events and properties.
 type Twenty48Dispatcher () =
-    inherit GameDispatcher<Twenty48, Twenty48Message, Twenty48Command> (Splash)
+    inherit GameDispatcher<Twenty48> (Splash)
 
-    // here we define the game's properties and event handling
-    override this.Definitions (twenty48, _) =
-        [Game.DesiredScreen :=
-            match twenty48 with
-            | Splash -> Desire Simulants.Splash
-            | Title -> Desire Simulants.Title
-            | Credits -> Desire Simulants.Credits
-            | Gameplay -> Desire Simulants.Gameplay
-         if twenty48 = Splash then Simulants.Splash.DeselectingEvent => ShowTitle
-         Simulants.TitleCredits.ClickEvent => ShowCredits
-         Simulants.TitlePlay.ClickEvent => ShowGameplay
-         Simulants.TitleExit.ClickEvent => Exit
-         Simulants.CreditsBack.ClickEvent => ShowTitle
-         Simulants.Gameplay.QuitEvent => ShowTitle]
-
-    // here we handle the above messages
-    override this.Message (_, message, _, _) =
-        match message with
-        | ShowTitle -> just Title
-        | ShowCredits -> just Credits
-        | ShowGameplay -> just Gameplay
-
-    // here we handle the above commands
-    override this.Command (_, command, _, world) =
-        match command with
-        | Exit ->
-            if world.Unaccompanied
-            then just (World.exit world)
-            else just world
-
-    // here we describe the content of the game, including all of its screens.
-    override this.Content (_, _) =
-        [Content.screen Simulants.Splash.Name (Slide (Constants.Dissolve.Default, Constants.Slide.Default, None, Simulants.Title)) [] []
-         Content.screenWithGroupFromFile Simulants.Title.Name (Dissolve (Constants.Dissolve.Default, None)) "Assets/Gui/Title.nugroup" [] []
-         Content.screenWithGroupFromFile Simulants.Credits.Name (Dissolve (Constants.Dissolve.Default, None)) "Assets/Gui/Credits.nugroup" [] []
-         Content.screen<GameplayDispatcher> Simulants.Gameplay.Name (Dissolve (Constants.Dissolve.Default, None)) [] []]
+    override this.Run (twenty48, _, world): Twenty48 * World =
+        // declare splash screen
+        let result, world =
+            World.beginScreen
+                Simulants.Splash.Name
+                (twenty48 = Splash)
+                (Slide (Constants.Dissolve.Default, Constants.Slide.Default, None, Simulants.Title))
+                []
+                world
+        let twenty48 =
+           match result |> Seq.filter (function Deselecting -> true | _ -> false) |> Seq.tryHead with
+           | Some _ -> Title
+           | None -> twenty48
+        let world = World.endScreen world
+           
+        // declare title screen
+        let _, world =
+            World.beginScreenWithGroupFromFile
+              Simulants.Title.Name
+              (twenty48 = Title)
+              (Dissolve (Constants.Dissolve.Default, None))
+              "Assets/Gui/Title.nugroup"
+              []
+              world
+        let world = World.beginGroup "Gui" [] world
+        let twenty48, world =
+            match World.doButton "Play" [] world with
+            | true, world -> (Gameplay, world)
+            | false, world -> (twenty48, world)
+        let twenty48, world =
+            match World.doButton "Credits" [] world with
+            | true, world -> (Credits, world)
+            | false, world -> (twenty48, world)
+        let world =
+            match World.doButton "Exit" [] world with
+            | true, world -> World.exit world
+            | false, world -> world
+        let world = World.endGroup world
+        let world = World.endScreen world
+        
+        // Declare gameplay screen
+        let result, world =
+            World.beginScreen<GameplayDispatcher>
+                Simulants.Gameplay.Name
+                (twenty48 = Gameplay)
+                (Dissolve (Constants.Dissolve.Default, None))
+                []
+                world
+        let gameplayScreen = world.ContextScreen
+        let world =
+            if FQueue.contains Select result
+            then gameplayScreen.SetGameplay Gameplay.initial world
+            else world
+        let twenty48 =
+            if gameplayScreen.GetSelected world && (gameplayScreen.GetGameplay world).GameplayState = Quit
+            then Title
+            else twenty48
+        let world = World.endScreen world
+            
+        // handle Alt+F4
+        let world =
+            if World.isKeyboardAltDown world && World.isKeyboardKeyDown KeyboardKey.F4 world
+            then World.exit world
+            else world
+        
+        twenty48, world

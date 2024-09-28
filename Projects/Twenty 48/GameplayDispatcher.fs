@@ -10,12 +10,13 @@ type GameplayMessage =
     | FinishQuitting
     | TimeUpdate
     | TryShift of Direction
+    | StartQuittingMsg
     | Nil
     interface Message
     
 // this is our gameplay MMCC command type.
 type GameplayCommand =
-    | StartQuitting
+    | NilCmd
     interface Command
     
 // this extends the Screen API to expose the Gameplay model as well as the Quit event.
@@ -29,115 +30,94 @@ module GameplayExtensions =
         
 // this is the dispatcher that defines the behavior of the screen where gameplay takes place.
 type GameplayDispatcher () =
-    inherit ScreenDispatcher<Gameplay, GameplayMessage, GameplayCommand> (Gameplay.empty)
-
-    // here we define the screen's fallback model depending on whether screen is selected
-    override this.GetFallbackModel (_, screen, world) =
-        if screen.GetSelected world
-        then Gameplay.initial
-        else Gameplay.empty
-
-    // here we define the screen's property values and event handling
-    override this.Definitions (_, _) =
-        [Screen.SelectEvent => StartPlaying
-         Screen.DeselectingEvent => FinishQuitting
-         Screen.TimeUpdateEvent => TimeUpdate
-         Game.KeyboardKeyDownEvent =|> fun evt ->
-            if not evt.Data.Repeated then
-                match evt.Data.KeyboardKey with
-                | KeyboardKey.Up -> TryShift Upward
-                | KeyboardKey.Down -> TryShift Downward
-                | KeyboardKey.Left -> TryShift Leftward
-                | KeyboardKey.Right -> TryShift Rightward
-                | _ -> Nil
-            else Nil]
-
-    // here we handle the above messages
-    override this.Message (gameplay, message, _, world) =
-
-        match message with
-        | StartPlaying ->
-            just Gameplay.initial
-
-        | FinishQuitting ->
-            just Gameplay.empty
-
-        | TimeUpdate ->
-            just { gameplay with GameplayTime = inc gameplay.GameplayTime }
-
-        | TryShift direction ->
-            if world.Advancing && gameplay.GameplayState = Playing false then
-                let gameplay' =
-                    match direction with
-                    | Upward -> Gameplay.shiftUp gameplay
-                    | Rightward -> Gameplay.shiftRight gameplay
-                    | Downward -> Gameplay.shiftDown gameplay
-                    | Leftward -> Gameplay.shiftLeft gameplay
-                if Gameplay.detectTileChange gameplay gameplay' then
-                    let gameplay = Gameplay.addTile gameplay'
-                    if not (Gameplay.detectMoveAvailability gameplay)
-                    then just { gameplay with GameplayState = Playing true }
-                    else just gameplay
-                else just gameplay
-            else just gameplay
-
-        | Nil ->
-            just gameplay
-
-    // here we handle the above commands
-    override this.Command (_, command, screen, world) =
-
-        match command with
-        | StartQuitting ->
-            let world = World.publish () screen.QuitEvent screen world
-            just world
-
-    // here we describe the content of the game including the level, the hud, and the player
-    override this.Content (gameplay, _) =
-
-        [// the gui group
-         Content.group Simulants.GameplayGui.Name []
-            [Content.button Simulants.GameplayQuit.Name
-                [Entity.Position == v3 232.0f -144.0f 0.0f
-                 Entity.Elevation == 10.0f
-                 Entity.Text == "Quit"
-                 Entity.ClickEvent => StartQuitting]]
-
-         // the scene group
-         Content.group Simulants.GameplayScene.Name []
-
-            [// score
-             Content.text "Score"
-                [Entity.Position == v3 232.0f 155.0f 0.0f
-                 Entity.Elevation == 10.0f
-                 Entity.Text := "Score: " + string gameplay.Score]
-
-             // game over
-             match gameplay.GameplayState with
-             | Playing true ->
-                Content.text "GameOver"
-                    [Entity.Position == v3 0.0f 155.0f 0.0f
-                     Entity.Elevation == 10.0f
-                     Entity.Justification == Justified (JustifyCenter, JustifyMiddle)
-                     Entity.Text == "Game Over!"]
-             | Playing false | Quit -> ()
-
-             // board
-             let gutter = v3 4.0f 4.0f 0.0f
-             let tileSize = v3 32.0f 32.0f 0.0f
-             let tileOffset = (gameplay.BoardSize.V3 * tileSize + gutter * (gameplay.BoardSize - v2iOne).V3) * -0.5f
-             Content.panel Simulants.GameplayBoard.Name
-                [Entity.Size == v3 148.0f 148.0f 0.0f
-                 Entity.Elevation == 1.0f
-                 Entity.BackdropImageOpt == Some Assets.Gameplay.BoardImage]
-                [for tile in gameplay.Tiles do
-                    Content.text ("Tile+" + string tile.TileId)
-                        [Entity.PositionLocal := tile.Position.V3 * (tileSize + gutter) + tileSize * 0.5f + tileOffset
-                         Entity.Size == tileSize
-                         Entity.ElevationLocal == 1.0f
-                         Entity.Text := string tile.Value
-                         Entity.Justification == Justified (JustifyCenter, JustifyMiddle)
-                         Entity.Font == Assets.Gui.ClearSansFont
-                         Entity.FontSizing := if tile.Value < 16384 then Some 12 else Some 8
-                         Entity.TextColor == Color.GhostWhite
-                         Entity.BackdropImageOpt := Some (Assets.Gameplay.TileImage tile.Value)]]]]
+    inherit ScreenDispatcher<Gameplay> (Gameplay.empty)
+    
+    override this.Run (gameplay, _, world): Gameplay * World =
+        
+        // Core update loop
+        let gameplay =
+            if world.Advancing then
+                [Upward; Rightward; Downward; Leftward]
+                |> List.fold (fun gameplay direction ->
+                    let key = 
+                        match direction with
+                        | Upward -> KeyboardKey.Up
+                        | Rightward -> KeyboardKey.Right
+                        | Downward -> KeyboardKey.Down
+                        | Leftward -> KeyboardKey.Left
+                    let keyIsPressed = World.isKeyboardKeyDown key world
+                    let keyWasPressed = gameplay.PressedDirections.Contains direction
+                    let gameplay =
+                        if keyIsPressed && not(keyWasPressed)
+                        then Gameplay.doShift direction gameplay
+                        else gameplay
+                    let pressedDirections =
+                        if keyIsPressed
+                        then Set.add direction gameplay.PressedDirections
+                        else Set.remove direction gameplay.PressedDirections
+                    { gameplay with PressedDirections = pressedDirections }
+                    ) gameplay
+            else gameplay
+            
+        // The gui group 
+        let world = World.beginGroup Simulants.GameplayGui.Name [] world
+        let gameplay, world =
+            match World.doButton
+                      Simulants.GameplayQuit.Name
+                      [Entity.Position .= v3 232.0f -144.0f 0.0f
+                       Entity.Elevation .= 10.0f
+                       Entity.Text .= "Quit"] world with
+            | true, world -> {gameplay with GameplayState = Quit }, world
+            | false, world -> gameplay, world
+        let world = World.endGroup world
+        
+        // the scene group
+        let world = World.beginGroup Simulants.GameplayScene.Name [] world
+        let world =
+            World.doText "Score"
+              [Entity.Position .= v3 232.0f 155.0f 0.0f
+               Entity.Elevation .= 10.0f
+               Entity.Text @= "Score: " + string gameplay.Score]
+              world
+        let world =
+            match gameplay.GameplayState with
+            | Playing true ->
+                World.doText "GameOver"
+                    [Entity.Position .= v3 0.0f 155.0f 0.0f
+                     Entity.Elevation .= 10.0f
+                     Entity.Text .= "Game Over!"
+                     Entity.Justification .= Justified (JustifyCenter, JustifyMiddle)]
+                    world
+            | Playing false | Quit -> world
+        
+        // board panel
+        let world =
+            World.beginPanel Simulants.GameplayBoard.Name
+              [Entity.Size .= v3 148.0f 148.0f 0.0f
+               Entity.Elevation .= 1.0f
+               Entity.BackdropImageOpt .= Some Assets.Gameplay.BoardImage]
+              world
+        let gutter = v3 4.0f 4.0f 0.0f
+        let tileSize = v3 32.0f 32.0f 0.0f
+        let tileOffset = (gameplay.BoardSize.V3 * tileSize + gutter * (gameplay.BoardSize - v2iOne).V3) * -0.5f
+        let world =
+            gameplay.Tiles
+            |> List.fold (fun world tile ->
+                let world =
+                    World.doText ("Tile+" + string tile.TileId)
+                      [Entity.PositionLocal @= tile.Position.V3 * (tileSize + gutter) + tileSize * 0.5f + tileOffset
+                       Entity.Size .= tileSize
+                       Entity.ElevationLocal .= 1.0f
+                       Entity.Text @= string tile.Value
+                       Entity.Justification .= Justified (JustifyCenter, JustifyMiddle)
+                       Entity.Font .= Assets.Gui.ClearSansFont
+                       Entity.FontSizing @= if tile.Value < 16384 then Some 12 else Some 8
+                       Entity.TextColor .= Color.GhostWhite
+                       Entity.BackdropImageOpt @= Some (Assets.Gameplay.TileImage tile.Value)]
+                      world
+                world
+                ) world
+        let world = World.endPanel world
+        let world = World.endGroup world
+            
+        gameplay, world

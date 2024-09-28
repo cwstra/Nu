@@ -34,8 +34,7 @@ type Gameplay =
     { GameplayState : GameplayState
       BoardSize : Vector2i
       Tiles : Tile list
-      Score : int
-      PressedDirections: Set<Direction>}
+      Score : int}
 
     member this.TilesOrdered =
         List.sortBy (fun t -> t.TileId) this.Tiles
@@ -165,8 +164,7 @@ type Gameplay =
         { GameplayState = Quit
           BoardSize = v2iDup 4
           Tiles = []
-          Score = 0
-          PressedDirections = Set.empty }
+          Score = 0}
 
     // this represents the gameplay model in its initial state, such as when gameplay starts.
     static member initial =

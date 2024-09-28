@@ -45,17 +45,9 @@ type GameplayDispatcher () =
                         | Rightward -> KeyboardKey.Right
                         | Downward -> KeyboardKey.Down
                         | Leftward -> KeyboardKey.Left
-                    let keyIsPressed = World.isKeyboardKeyDown key world
-                    let keyWasPressed = gameplay.PressedDirections.Contains direction
-                    let gameplay =
-                        if keyIsPressed && not(keyWasPressed)
-                        then Gameplay.doShift direction gameplay
-                        else gameplay
-                    let pressedDirections =
-                        if keyIsPressed
-                        then Set.add direction gameplay.PressedDirections
-                        else Set.remove direction gameplay.PressedDirections
-                    { gameplay with PressedDirections = pressedDirections }
+                    if World.isKeyboardKeyPressed key world
+                    then Gameplay.doShift direction gameplay
+                    else gameplay
                     ) gameplay
             else gameplay
             

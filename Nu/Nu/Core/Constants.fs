@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu.Constants
 open System
@@ -23,6 +23,12 @@ module Assimp =
 
     let [<Literal>] PostProcessSteps = Assimp.PostProcessSteps.Triangulate ||| Assimp.PostProcessSteps.GlobalScale
     let [<Literal>] RawPropertyPrefix = "$raw."
+    let [<Literal>] RenderStylePropertyName = RawPropertyPrefix + "RenderStyle"
+    let [<Literal>] PresencePropertyName = RawPropertyPrefix + "Presence"
+    let [<Literal>] IgnoreLightMapsPropertyName = RawPropertyPrefix + "IgnoreLightMaps"
+    let [<Literal>] OpaqueDistancePropertyName = RawPropertyPrefix + "OpaqueDistance"
+    let [<Literal>] TwoSidedPropertyName = RawPropertyPrefix + "TwoSided"
+    let [<Literal>] NavShapePropertyName = RawPropertyPrefix + "NavShape"
 
 [<RequireQualifiedAccess>]
 module Engine =
@@ -55,7 +61,7 @@ module Engine =
     let [<Literal>] BodyTypePropertyName = "BodyType"
     let [<Literal>] PhysicsMotionPropertyName = "PhysicsMotion"
     let [<Literal>] EffectNameDefault = "Effect"
-    let [<Literal>] RefinementDir = "Refinement"
+    let [<Literal>] RefinementDir = "refinement"
     let [<Uniform>] Entity2dSizeDefault = Vector3 (32.0f, 32.0f, 0.0f)
     let [<Uniform>] EntityGuiSizeDefault = Vector3 (128.0f, 32.0f, 0.0f)
     let [<Uniform>] Entity3dSizeDefault = Vector3 (1.0f, 1.0f, 1.0f)
@@ -80,7 +86,64 @@ module Engine =
 [<RequireQualifiedAccess>]
 module Render =
 
-    let [<Uniform>] VendorNamesExceptedFromGlFinishSwapRequirement = ["NVIDIA Corporation"; "AMD"; "ATI Technologies Inc."] // NOTE: for all we know, maybe only Intel requires glFinish...
+    /// The vendor names for which we have not yet experienced a need to call glFinish before swapping.
+    ///
+    /// be me -
+    /// Certain drivers seem to require glFinish before swap. Any documented insight into this?
+    ///
+    /// be chat-gpt -
+    /// The requirement for calling `glFinish()` before swapping buffers on certain drivers is an issue related to how
+    /// different GPUs and drivers handle the rendering pipeline and buffer swapping. While it's not explicitly
+    /// mandated in the OpenGL specification, some drivers have behavior that benefits from calling `glFinish()` to
+    /// ensure proper synchronization between the GPU and the display system. Here's why this might happen:
+    ///
+    /// ### 1. **Driver-Specific Behavior**
+    /// Some OpenGL drivers (particularly on older or less optimized systems) may not fully synchronize the pipeline
+    /// without a manual intervention like `glFinish()`. This can lead to incomplete frames being swapped to the
+    /// display, or the pipeline being flushed too late. By calling `glFinish()`, you force the GPU to complete all
+    /// previously issued commands before swapping buffers, which can help ensure that the rendered frame is complete.
+    ///
+    /// - **NVIDIA**: On some NVIDIA drivers, using `glFinish()` may help with synchronization issues where the GPU hasn’t completed rendering when the swap occurs.
+    /// - **Intel**: Integrated GPUs (like Intel's) sometimes have issues where they are slower to synchronize between CPU and GPU without `glFinish()`.
+    /// - **AMD**: Older AMD drivers also occasionally show issues that require `glFinish()` before `glSwapBuffers()` to ensure proper display.
+    ///
+    /// ### 2. **VSync and Buffer Management**
+    /// When VSync is enabled, buffer swaps should ideally occur at the vertical blanking interval (VBI) to avoid
+    /// tearing. However, some drivers may not respect VSync properly unless you ensure that all GPU commands are
+    /// completed before the swap. `glFinish()` forces the driver to ensure that the frame is fully rendered and ready
+    /// to be presented to the screen.
+    ///
+    /// ### 3. **Double and Triple Buffering**
+    /// If you're using **double buffering**, OpenGL typically uses an implicit synchronization between rendering and
+    /// swapping buffers. However, with **triple buffering**, there can be more frames in flight, and `glFinish()`
+    /// might be needed to avoid over-rendering frames ahead of the display refresh. This is because triple buffering
+    /// allows the GPU to continue rendering frames even if a buffer is waiting to be swapped, which can sometimes
+    /// cause tearing or incomplete frames being displayed unless forced to finish rendering.
+    ///
+    /// ### 4. **Swap Interval and Timing Issues**
+    /// In cases where **swap interval** is set (e.g., for VSync), some drivers may have timing issues, especially when
+    /// the system is under heavy load. If `glSwapBuffers()` is called while the GPU is still processing previous
+    /// frames, artifacts or incomplete frames might appear. Calling `glFinish()` forces a flush of the GPU pipeline,
+    /// ensuring that all previous commands are complete before the swap.
+    ///
+    /// ### Documented Insights:
+    /// While the OpenGL specification does not explicitly require `glFinish()` before `glSwapBuffers()`, several sources and community forums discuss situations where it's needed:
+    /// - **OpenGL Wiki - Synchronization**: The OpenGL Wiki highlights that implicit synchronization generally happens with buffer swaps but doesn’t rule out cases where explicit flushing (`glFinish()` or `glFlush()`) might be needed due to driver issues. [OpenGL Wiki - Synchronization](https://www.khronos.org/opengl/wiki/Synchronization#glFinish_and_glFlush)
+    /// - **NVIDIA Developer Documentation**: NVIDIA provides guidance on best practices, sometimes recommending `glFinish()` in specific performance-related debugging cases, particularly when dealing with multi-threading or complex GPU pipelines.
+    /// - **Community Observations (Stack Overflow, Forums)**: Various community discussions across platforms like Stack Overflow and Khronos forums have observed the need for `glFinish()` before `glSwapBuffers()` on specific hardware configurations, often to resolve visual artifacts or performance issues.
+    ///
+    /// ### Performance Impact:
+    /// Using `glFinish()` forces a full synchronization between CPU and GPU, which can reduce performance, as it
+    /// introduces a stall while waiting for the GPU to finish all operations. Therefore, it should be used only if
+    /// necessary (e.g., debugging or when a driver shows specific problems).
+    ///
+    /// ### Conclusion:
+    /// The need for `glFinish()` before `glSwapBuffers()` is typically driver-specific and arises due to differences
+    /// in how synchronization between the rendering pipeline and the display system is handled. While it's not part of
+    /// the OpenGL specification, calling `glFinish()` can help ensure proper synchronization, especially on
+    /// problematic drivers or when using VSync. If your application runs without visual issues or performance
+    /// degradation without `glFinish()`, it's usually best to avoid it for the sake of performance.
+    let [<Uniform>] VendorNamesExceptedFromSwapGlFinishRequirement = ["NVIDIA Corporation"; "AMD"; "ATI Technologies Inc."]
     let [<Literal>] IgnoreLightMapsName = "IgnoreLightMaps"
     let [<Literal>] OpaqueDistanceName = "OpaqueDistance"
     let [<Literal>] TwoSidedName = "TwoSided"
@@ -97,10 +160,11 @@ module Render =
     let [<Uniform>] mutable VirtualResolution = match ConfigurationManager.AppSettings.["VirtualResolution"] with null -> v2i 640 360 | resolution -> scvalue resolution
     let [<Uniform>] mutable VirtualScalar = match ConfigurationManager.AppSettings.["VirtualScalar"] with null -> 3 | scalar -> scvalue scalar
     let [<Uniform>] mutable Resolution = VirtualResolution * VirtualScalar
-    let [<Uniform>] mutable ShadowResolution = Vector2i (512 * VirtualScalar)
+    let [<Uniform>] mutable ShadowVirtualResolution = match ConfigurationManager.AppSettings.["ShadowVirtualResolution"] with null -> 512 | scalar -> scvalue scalar
+    let [<Uniform>] mutable ShadowResolution = Vector2i (ShadowVirtualResolution * VirtualScalar)
     let [<Uniform>] mutable Viewport = Viewport (NearPlaneDistanceOmnipresent, FarPlaneDistanceOmnipresent, v2iZero, Resolution)
     let [<Uniform>] OffsetMargin (windowSize : Vector2i) = Vector2i ((windowSize.X - Resolution.X) / 2, (windowSize.Y - Resolution.Y) / 2)
-    let [<Uniform>] OffsetViewport (windowSize : Vector2i) = Nu.Viewport (NearPlaneDistanceOmnipresent, FarPlaneDistanceOmnipresent, Box2i(OffsetMargin windowSize, Resolution))
+    let [<Uniform>] OffsetViewport (windowSize : Vector2i) = Nu.Viewport (NearPlaneDistanceOmnipresent, FarPlaneDistanceOmnipresent, Box2i (OffsetMargin windowSize, Resolution))
     let [<Uniform>] mutable SsaoResolutionDivisor = match ConfigurationManager.AppSettings.["SsaoResolutionDivisor"] with null -> 1 | divisor -> scvalue divisor
     let [<Uniform>] mutable SsaoResolution = Resolution / SsaoResolutionDivisor
     let [<Uniform>] mutable SsaoViewport = Nu.Viewport (NearPlaneDistanceOmnipresent, FarPlaneDistanceOmnipresent, Box2i (v2iZero, SsaoResolution))
@@ -110,8 +174,8 @@ module Render =
     let [<Uniform>] WindowClearColor = Color.Zero
     let [<Uniform>] ViewportClearColor = Color.Zero // NOTE: do not change this color as the deferred lighting shader checks if position.w zero to ignore fragment.
     let [<Literal>] TexturePriorityDefault = 0.5f // higher priority than (supposed) default, but not maximum. this value is arrived at through experimenting with a Windows NVidia driver.
-    let [<Uniform>] mutable TextureAnisotropyMax = match ConfigurationManager.AppSettings.["TextureAnisotropyMax"] with null -> 8.0f | anisoMax -> scvalue anisoMax
-    let [<Uniform>] mutable TextureMinimalMipmapIndex = match ConfigurationManager.AppSettings.["TextureMinimalMipmapIndex"] with null -> 1 | index -> scvalue index
+    let [<Uniform>] mutable TextureAnisotropyMax = match ConfigurationManager.AppSettings.["TextureAnisotropyMax"] with null -> 16.0f | anisoMax -> scvalue anisoMax
+    let [<Uniform>] mutable TextureMinimalMipmapIndex = match ConfigurationManager.AppSettings.["TextureMinimalMipmapIndex"] with null -> 2 | index -> scvalue index
     let [<Literal>] SpriteBatchSize = 192 // NOTE: remember to update SPRITE_BATCH_SIZE in shaders when changing this!
     let [<Literal>] SpriteBorderTexelScalar = 0.005f
     let [<Literal>] SpriteMessagesPrealloc = 256
@@ -130,26 +194,25 @@ module Render =
     let [<Literal>] LightMapsMaxForward = 2
     let [<Literal>] LightsMaxDeferred = 32
     let [<Literal>] LightsMaxForward = 8
-    let [<Literal>] ShadowsMaxShader = 16 // NOTE: remember to update SHADOWS_MAX in shaders when changing this!
-    let [<Uniform>] mutable ShadowsMax = match ConfigurationManager.AppSettings.["ShadowsMax"] with null -> 8 | shadowsMax -> min (scvalue shadowsMax) ShadowsMaxShader
-    let [<Uniform>] mutable ShadowDetailedCount = match ConfigurationManager.AppSettings.["ShadowDetailedCount"] with null -> 1 | count -> scvalue count
-    let [<Uniform>] mutable ShadowDetailedResolutionScalar = match ConfigurationManager.AppSettings.["ShadowDetailedResolutionScalar"] with null -> 3 | scalar -> scvalue scalar
+    let [<Literal>] ShadowTexturesMaxShader = 16 // NOTE: remember to update SHADOW_TEXTURES_MAX in shaders when changing this!
+    let [<Literal>] ShadowMapsMaxShader = 8 // NOTE: remember to update SHADOW_TEXTURES_MAX in shaders when changing this!
+    let [<Uniform>] mutable ShadowTexturesMax = match ConfigurationManager.AppSettings.["ShadowTexturesMax"] with null -> 16 | shadowTexturesMax -> min (scvalue shadowTexturesMax) ShadowTexturesMaxShader
+    let [<Uniform>] mutable ShadowMapsMax = match ConfigurationManager.AppSettings.["ShadowMapsMax"] with null -> 8 | shadowMapsMax -> min (scvalue shadowMapsMax) ShadowMapsMaxShader
+    let [<Uniform>] mutable ShadowDetailedResolutionScalar = match ConfigurationManager.AppSettings.["ShadowDetailedResolutionScalar"] with null -> 2 | scalar -> scvalue scalar
     let [<Literal>] ShadowFovMax = 2.1f // NOTE: remember to update SHADOW_FOV_MAX in shaders when changing this!
     let [<Literal>] ReflectionMapResolution = 1024
     let [<Literal>] IrradianceMapResolution = 32
     let [<Literal>] EnvironmentFilterResolution = 512
     let [<Literal>] EnvironmentFilterMips = 7 // NOTE: changing this requires changing the REFLECTION_LOD_MAX constants in shader code.
-    let [<Literal>] AnimatedSurfaceOcclusionPrePassEnabledDefault = false
-    let [<Literal>] StaticSurfaceOcclusionPrePassEnabledDefault = false
-    let [<Literal>] TerrainOcclusionPrePassEnabledDefault = false
     let [<Literal>] LightMappingEnabledDefault = true
     let [<Literal>] LightCutoffMarginDefault = 0.333f
+    let [<Literal>] LightShadowSampleScalarDefault = 0.01f
     let [<Literal>] LightShadowExponentDefault = 80.0f
-    let [<Literal>] LightShadowDensityDefault = 8.0f
+    let [<Literal>] LightShadowDensityDefault = 12.0f
     let [<Literal>] SsaoEnabledDefault = true
-    let [<Literal>] SsaoSampleCountDefault = 12
+    let [<Literal>] SsaoSampleCountDefault = 16
     let [<Literal>] SsaoSampleCountMax = 128
-    let [<Literal>] SsaoIntensityDefault = 1.35f
+    let [<Literal>] SsaoIntensityDefault = 1.5f
     let [<Literal>] SsaoBiasDefault = 0.025f
     let [<Literal>] SsaoRadiusDefault = 0.125f
     let [<Literal>] SsaoDistanceMaxDefault = 0.125f
@@ -160,9 +223,9 @@ module Render =
     let [<Literal>] SsvfIntensityDefault = 0.5f
     let [<Literal>] SsrEnabledGlobalDefault = false
     let [<Literal>] SsrEnabledLocalDefault = true
-    let [<Literal>] SsrDetailDefault = 0.41f
+    let [<Literal>] SsrDetailDefault = 0.21f
     let [<Literal>] SsrRefinementsMaxDefault = 24
-    let [<Literal>] SsrRayThicknessDefault = 0.0333f
+    let [<Literal>] SsrRayThicknessDefault = 0.05f
     let [<Literal>] SsrTowardEyeCutoffDefault = 0.9f
     let [<Literal>] SsrDepthCutoffDefault = 24.0f
     let [<Literal>] SsrDepthCutoffMarginDefault = 0.2f
@@ -240,7 +303,7 @@ module Associations =
 module Gui =
 
     let [<Uniform>] mutable SliceMarginDefault = match ConfigurationManager.AppSettings.["SliceMarginDefault"] with null -> Vector2 (4.0f, 4.0f) | marginDefault -> scvalue marginDefault
-    let [<Uniform>] DisabledColorDefault = Color (0.75f, 0.75f, 0.75f, 0.75f)
+    let [<Uniform>] ColorDisabledDefault = Color (0.75f, 0.75f, 0.75f, 0.75f)
 
 [<RequireQualifiedAccess>]
 module TileMap =
@@ -273,12 +336,15 @@ module Paths =
     let [<Literal>] FilterBilateralDownSample4dShaderFilePath = "Assets/Default/FilterBilateralDownSample4d.glsl"
     let [<Literal>] FilterBilateralUpSample4dShaderFilePath = "Assets/Default/FilterBilateralUpSample4d.glsl"
     let [<Literal>] FilterFxaaShaderFilePath = "Assets/Default/FilterFxaa.glsl"
-    let [<Literal>] PhysicallyBasedShadowStaticShaderFilePath = "Assets/Default/PhysicallyBasedShadowStatic.glsl"
-    let [<Literal>] PhysicallyBasedShadowAnimatedShaderFilePath = "Assets/Default/PhysicallyBasedShadowAnimated.glsl"
-    let [<Literal>] PhysicallyBasedShadowTerrainShaderFilePath = "Assets/Default/PhysicallyBasedShadowTerrain.glsl"
-    let [<Literal>] PhysicallyBasedOcclusionStaticShaderFilePath = "Assets/Default/PhysicallyBasedOcclusionStatic.glsl"
-    let [<Literal>] PhysicallyBasedOcclusionAnimatedShaderFilePath = "Assets/Default/PhysicallyBasedOcclusionAnimated.glsl"
-    let [<Literal>] PhysicallyBasedOcclusionTerrainShaderFilePath = "Assets/Default/PhysicallyBasedOcclusionTerrain.glsl"
+    let [<Literal>] PhysicallyBasedShadowStaticPointShaderFilePath = "Assets/Default/PhysicallyBasedShadowStaticPoint.glsl"
+    let [<Literal>] PhysicallyBasedShadowStaticSpotShaderFilePath = "Assets/Default/PhysicallyBasedShadowStaticSpot.glsl"
+    let [<Literal>] PhysicallyBasedShadowStaticDirectionalShaderFilePath = "Assets/Default/PhysicallyBasedShadowStaticDirectional.glsl"
+    let [<Literal>] PhysicallyBasedShadowAnimatedPointShaderFilePath = "Assets/Default/PhysicallyBasedShadowAnimatedPoint.glsl"
+    let [<Literal>] PhysicallyBasedShadowAnimatedSpotShaderFilePath = "Assets/Default/PhysicallyBasedShadowAnimatedSpot.glsl"
+    let [<Literal>] PhysicallyBasedShadowAnimatedDirectionalShaderFilePath = "Assets/Default/PhysicallyBasedShadowAnimatedDirectional.glsl"
+    let [<Literal>] PhysicallyBasedShadowTerrainPointShaderFilePath = "Assets/Default/PhysicallyBasedShadowTerrainPoint.glsl"
+    let [<Literal>] PhysicallyBasedShadowTerrainSpotShaderFilePath = "Assets/Default/PhysicallyBasedShadowTerrainSpot.glsl"
+    let [<Literal>] PhysicallyBasedShadowTerrainDirectionalShaderFilePath = "Assets/Default/PhysicallyBasedShadowTerrainDirectional.glsl"
     let [<Literal>] PhysicallyBasedDeferredStaticShaderFilePath = "Assets/Default/PhysicallyBasedDeferredStatic.glsl"
     let [<Literal>] PhysicallyBasedDeferredAnimatedShaderFilePath = "Assets/Default/PhysicallyBasedDeferredAnimated.glsl"
     let [<Literal>] PhysicallyBasedDeferredTerrainShaderFilePath = "Assets/Default/PhysicallyBasedDeferredTerrain.glsl"

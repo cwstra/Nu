@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
@@ -31,6 +31,10 @@ module WorldModule2 =
     (* Frame Pacing *)
     let mutable private FramePaceIssues = 0
     let mutable private FramePaceChecks = 0
+
+    (* Cached ImNui Collections *)
+    let private ImNuiSimulantsToDestroy = List ()
+    let private SimulantImNuiComparer = Comparer<int64 * Simulant>.Create (fun (a, _) (b, _) -> a.CompareTo b)
 
     type World with
 
@@ -75,17 +79,35 @@ module WorldModule2 =
             let world =
                 match World.getSelectedScreenOpt world with
                 | Some selectedScreen ->
-                    let eventTrace = EventTrace.debug "World" "selectScreen" "Deselecting" EventTrace.empty
-                    World.publishPlus () selectedScreen.DeselectingEvent eventTrace selectedScreen false false world
+                    let deselecting =
+                        match transitionStateAndScreenOpt with
+                        | Some (_, screen) when selectedScreen = screen -> false
+                        | Some _ | None -> true
+                    if deselecting then
+                        let eventTrace = EventTrace.debug "World" "selectScreen" "Deselecting" EventTrace.empty
+                        World.publishPlus () selectedScreen.DeselectingEvent eventTrace selectedScreen false false world
+                    else world
                 | None -> world
             match transitionStateAndScreenOpt with
             | Some (transitionState, screen) ->
-                let world = World.setScreenTransitionStatePlus transitionState screen world
-                let world = World.setSelectedScreen screen world
-                let eventTrace = EventTrace.debug "World" "selectScreen" "Select" EventTrace.empty
-                World.publishPlus () screen.SelectEvent eventTrace screen false false world
-            | None ->
-                World.setSelectedScreenOpt None world
+                let world =
+                    match World.getSelectedScreenOpt world with
+                    | Some selectedScreen ->
+                        let select =
+                            match transitionStateAndScreenOpt with
+                            | Some (_, screen) when selectedScreen = screen -> false
+                            | Some _ | None -> true
+                        if select then
+                            let world = World.setSelectedScreen screen world
+                            let eventTrace = EventTrace.debug "World" "selectScreen" "Select" EventTrace.empty
+                            World.publishPlus () screen.SelectEvent eventTrace screen false false world
+                        else world
+                    | None ->
+                        let world = World.setSelectedScreen screen world
+                        let eventTrace = EventTrace.debug "World" "selectScreen" "Select" EventTrace.empty
+                        World.publishPlus () screen.SelectEvent eventTrace screen false false world
+                World.setScreenTransitionStatePlus transitionState screen world
+            | None -> World.setSelectedScreenOpt None world
 
         /// Select the given screen without transitioning, even if another transition is taking place.
         static member selectScreen transitionState screen world =
@@ -127,12 +149,12 @@ module WorldModule2 =
                 let world = World.unsubscribe ScreenTransitionKeyboardKeyId world
                 world
             | IncomingState _ | OutgoingState _ ->
-                let world = World.subscribePlus ScreenTransitionMouseLeftId World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/Left/" + Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
-                let world = World.subscribePlus ScreenTransitionMouseMiddleId World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/Middle/" + Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
-                let world = World.subscribePlus ScreenTransitionMouseRightId World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/Right/" + Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
-                let world = World.subscribePlus ScreenTransitionMouseX1Id World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/X1/" + Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
-                let world = World.subscribePlus ScreenTransitionMouseX2Id World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/X2/" + Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
-                let world = World.subscribePlus ScreenTransitionKeyboardKeyId World.handleAsSwallow (stoa<KeyboardKeyData> ("KeyboardKey/" + Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
+                let world = World.subscribePlus ScreenTransitionMouseLeftId World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/Left/" + Constants.Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
+                let world = World.subscribePlus ScreenTransitionMouseMiddleId World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/Middle/" + Constants.Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
+                let world = World.subscribePlus ScreenTransitionMouseRightId World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/Right/" + Constants.Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
+                let world = World.subscribePlus ScreenTransitionMouseX1Id World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/X1/" + Constants.Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
+                let world = World.subscribePlus ScreenTransitionMouseX2Id World.handleAsSwallow (stoa<MouseButtonData> ("Mouse/X2/" + Constants.Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
+                let world = World.subscribePlus ScreenTransitionKeyboardKeyId World.handleAsSwallow (stoa<KeyboardKeyData> ("KeyboardKey/" + Constants.Address.WildcardName + "/Event/Game")) Nu.Game.Handle world |> snd
                 world
                 
         static member private updateScreenTransition3 transitionType (selectedScreen : Screen) world =
@@ -368,6 +390,94 @@ module WorldModule2 =
         static member transitionScreen destination world =
             World.tryTransitionScreen destination world |> snd
 
+        static member internal beginScreenPlus10<'d, 'r when 'd :> ScreenDispatcher> (zero : 'r) init transitionScreen setScreenSlide name select behavior groupFilePathOpt (args : Screen ArgImNui seq) (world : World) : ScreenResult FQueue * 'r * World =
+            if world.ContextImNui.Names.Length < 1 then raise (InvalidOperationException "ImNui screen declared outside of valid ImNui context (must be called in a Game context).")
+            let screenAddress = Address.makeFromArray (Array.add name world.ContextImNui.Names)
+            let world = World.setContext screenAddress world
+            let screen = Nu.Screen screenAddress
+            let world =
+                if not (screen.GetExists world) then
+                    let world = World.createScreen<'d> (Some name) world |> snd
+                    let world = World.setScreenProtected true screen world |> snd'
+                    match groupFilePathOpt with
+                    | Some groupFilePath -> World.readGroupFromFile groupFilePath None screen world |> snd
+                    | None -> world
+                else world
+            let (initializing, world) =
+                match world.SimulantImNuis.TryGetValue screen.ScreenAddress with
+                | (true, screenImNui) -> (false, World.utilizeSimulantImNui screen.ScreenAddress screenImNui world)
+                | (false, _) ->
+                    let world = World.addSimulantImNui screen.ScreenAddress { SimulantInitializing = true; SimulantUtilized = true; InitializationTime = Core.getTimeStampUnique (); Result = (FQueue.empty<ScreenResult>, zero) } world
+                    let mapFstResult (mapper : ScreenResult FQueue -> ScreenResult FQueue) world =
+                        let mapScreenImNui screenImNui =
+                            let (screenResult, userResult) = screenImNui.Result :?> ScreenResult FQueue * 'r
+                            { screenImNui with Result = (mapper screenResult, userResult) }
+                        World.tryMapSimulantImNui mapScreenImNui screen.ScreenAddress world
+                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj Select) world)) screen.SelectEvent screen world
+                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj IncomingStart) world)) screen.IncomingStartEvent screen world
+                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj IncomingFinish) world)) screen.IncomingFinishEvent screen world
+                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj OutgoingStart) world)) screen.OutgoingStartEvent screen world
+                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj OutgoingFinish) world)) screen.OutgoingFinishEvent screen world
+                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj Deselecting) world)) screen.DeselectingEvent screen world
+                    let mapSndResult (mapper : 'r -> 'r) world =
+                        let mapScreenImNui screenImNui =
+                            let (screenResult, userResult) = screenImNui.Result :?> ScreenResult FQueue * 'r
+                            { screenImNui with Result = (screenResult, mapper userResult) }
+                        World.tryMapSimulantImNui mapScreenImNui screen.ScreenAddress world
+                    (true, init mapSndResult screen world)
+            let initializing = initializing || Reinitializing
+            let world =
+                Seq.fold
+                    (fun world arg ->
+                        if (initializing || not arg.ArgStatic) && screen.GetExists world
+                        then screen.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
+                        else world)
+                    world args
+            let world =
+                if initializing && screen.GetExists world
+                then World.applyScreenBehavior setScreenSlide behavior screen world
+                else world
+            let world =
+                if screen.GetExists world && select then
+                    if world.Accompanied && world.Halted then // special case to quick cut when halted in the editor
+                        let transitionTime = world.GameTime
+                        let world = World.selectScreen (IdlingState transitionTime) screen world
+                        World.updateScreenIdling transitionTime screen world
+                    else transitionScreen screen world
+                else world
+            let (screenResult, userResult) = (World.getSimulantImNui screen.ScreenAddress world).Result :?> ScreenResult FQueue * 'r
+            let world = World.mapSimulantImNui (fun simulantImNui -> { simulantImNui with Result = (FQueue.empty<ScreenResult>, zero) }) screen.ScreenAddress world
+            (screenResult, userResult, world)
+
+        static member inline private beginScreen8<'d when 'd :> ScreenDispatcher> transitionScreen setScreenSlide name select behavior groupFilePathOpt args world : ScreenResult FQueue * World =
+            World.beginScreenPlus10<'d, unit> () (fun _ _ world -> world) transitionScreen setScreenSlide name select behavior groupFilePathOpt args world |> a_c
+
+        /// End the ImNui declaration of a screen.
+        static member endScreen (world : World) =
+            match world.ContextImNui with
+            | :? (Screen Address) -> World.setContext Game.GameAddress world
+            | _ -> raise (InvalidOperationException "World.beginScreen mismatch.")
+
+        /// Begin the ImNui declaration of a screen with the given arguments using a child group read from the given file path.
+        /// Note that changing the screen behavior and file path over time has no effect as only the first moment is used.
+        static member beginScreenWithGroupFromFilePlus<'d, 'r when 'd :> ScreenDispatcher> (zero : 'r) init name select behavior groupFilePath args world =
+            World.beginScreenPlus10<'d, 'r> zero init World.transitionScreen World.setScreenSlide name select behavior (Some groupFilePath) args world
+
+        /// Begin the ImNui declaration of a screen with the given arguments using a child group read from the given file path.
+        /// Note that changing the screen behavior and file path over time has no effect as only the first moment is used.
+        static member beginScreenWithGroupFromFile<'d when 'd :> ScreenDispatcher> name select behavior groupFilePath args world =
+            World.beginScreen8<'d> World.transitionScreen World.setScreenSlide name select behavior (Some groupFilePath) args world
+
+        /// Begin the ImNui declaration of a screen with the given arguments.
+        /// Note that changing the screen behavior over time has no effect as only the first moment is used.
+        static member beginScreenPlus<'d, 'r when 'd :> ScreenDispatcher> zero init name select behavior args world =
+            World.beginScreenPlus10<'d, 'r> zero init World.transitionScreen World.setScreenSlide name select behavior None args world
+
+        /// Begin the ImNui declaration of a screen with the given arguments.
+        /// Note that changing the screen behavior over time has no effect as only the first moment is used.
+        static member beginScreen<'d when 'd :> ScreenDispatcher> name select behavior args world =
+            World.beginScreen8<'d> World.transitionScreen World.setScreenSlide name select behavior None args world
+
         /// Set the slide aspects of a screen.
         static member setScreenSlide (slideDescriptor : SlideDescriptor) destination (screen : Screen) world =
 
@@ -480,10 +590,15 @@ module WorldModule2 =
                                             | None -> Overlay.dispatcherNameToOverlayName currentDescriptor.EntityDispatcherName
                                         with _ -> Overlay.dispatcherNameToOverlayName currentDescriptor.EntityDispatcherName
                                     | (false, _) -> Overlay.dispatcherNameToOverlayName currentDescriptor.EntityDispatcherName
-                                let facetNames =
+                                let facetNamesIntrinsic =
+                                    let entityDispatchers = World.getEntityDispatchers world
+                                    let currentDispatcher = entityDispatchers.[currentDescriptor.EntityDispatcherName]
+                                    currentDispatcher |> getType |> Reflection.getIntrinsicFacetNames
+                                let facetNamesExtrinsic =
                                     match currentDescriptor.EntityProperties.TryGetValue Constants.Engine.FacetNamesPropertyName with
                                     | (true, facetNamesSymbol) -> symbolToValue<string Set> facetNamesSymbol
                                     | (false, _) -> Set.empty
+                                let facetNames = Set.addMany facetNamesIntrinsic facetNamesExtrinsic
                                 let overlayer = World.getOverlayer world
                                 let overlaySymbols = Overlayer.getOverlaySymbols overlayName facetNames overlayer
                                 match overlaySymbols.TryGetValue propertyName with
@@ -511,10 +626,15 @@ module WorldModule2 =
                                                 | None -> Overlay.dispatcherNameToOverlayName targetDescriptor.EntityDispatcherName
                                             with _ -> Overlay.dispatcherNameToOverlayName targetDescriptor.EntityDispatcherName
                                         | (false, _) -> Overlay.dispatcherNameToOverlayName targetDescriptor.EntityDispatcherName
-                                    let facetNames =
+                                    let facetNamesIntrinsic =
+                                        let entityDispatchers = World.getEntityDispatchers world
+                                        let targetDispatcher = entityDispatchers.[targetDescriptor.EntityDispatcherName]
+                                        targetDispatcher |> getType |> Reflection.getIntrinsicFacetNames
+                                    let facetNamesExtrinsic =
                                         match targetDescriptor.EntityProperties.TryGetValue Constants.Engine.FacetNamesPropertyName with
                                         | (true, facetNamesSymbol) -> symbolToValue<string Set> facetNamesSymbol
                                         | (false, _) -> Set.empty
+                                    let facetNames = Set.addMany facetNamesIntrinsic facetNamesExtrinsic
                                     let overlayer = World.getOverlayer world
                                     let overlaySymbols = Overlayer.getOverlaySymbols overlayName facetNames overlayer
                                     match overlaySymbols.TryGetValue propertyName with
@@ -598,6 +718,18 @@ module WorldModule2 =
 
             // propagate entity
             let targets = entity.GetPropagationTargets world
+            let targetsValid =
+                Seq.filter (fun (target : Entity) ->
+                    let targetToEntity = Relation.relate target.EntityAddress entity.EntityAddress
+                    let linkHeadOpt = Array.tryHead targetToEntity.Links
+                    let linkLastOpt = Array.tryLast targetToEntity.Links
+                    let valid =
+                        not (linkHeadOpt = Some Parent && linkLastOpt = Some (Name target.Name)) && // propagation target is not descendent
+                        Array.contains Parent targetToEntity.Links && // propagation target is not ancestor
+                        linkLastOpt <> Some Current // propagation target is not self
+                    if not valid then Log.warn ("Invalid propagation target '" + scstring target + "' from source '" + scstring entity + "'.")
+                    valid)
+                    targets
             let currentDescriptor = World.writeEntity true EntityDescriptor.empty entity world
             let previousDescriptor = Option.defaultValue EntityDescriptor.empty (entity.GetPropagatedDescriptorOpt world)
             let world =
@@ -612,13 +744,26 @@ module WorldModule2 =
                         let world = target.SetOrder order world
                         world
                     else world)
-                    world targets
+                    world targetsValid
             let currentDescriptor = { currentDescriptor with EntityProperties = Map.remove (nameof Entity.PropagatedDescriptorOpt) currentDescriptor.EntityProperties }
             let world = entity.SetPropagatedDescriptorOpt (Some currentDescriptor) world
 
             // propagate sourced ancestor entities
             seq {
-                for target in entity.GetPropagationTargets world do
+                let targets = entity.GetPropagationTargets world
+                let targetsValid =
+                    Seq.filter (fun (target : Entity) ->
+                        let targetToEntity = Relation.relate target.EntityAddress entity.EntityAddress
+                        let linkHeadOpt = Array.tryHead targetToEntity.Links
+                        let linkLastOpt = Array.tryLast targetToEntity.Links
+                        let valid =
+                            not (linkHeadOpt = Some Parent && linkLastOpt = Some (Name target.Name)) && // propagation target is not descendent
+                            Array.contains Parent targetToEntity.Links && // propagation target is not ancestor
+                            linkLastOpt <> Some Current // propagation target is not self
+                        if not valid then Log.warn ("Invalid propagation target '" + scstring target + "' from source '" + scstring entity + "'.")
+                        valid)
+                        targets
+                for target in targetsValid do
                     if target.GetExists world then
                         for ancestor in World.getEntityAncestors target world do
                             if ancestor.GetExists world && ancestor.HasPropagationTargets world then
@@ -647,12 +792,12 @@ module WorldModule2 =
             let sourceTypes = List.map (fun source -> source.GetType ()) sources
             Overlay.makeIntrinsicOverlays requiresFacetNames sourceTypes
 
-        static member internal handleSubscribeAndUnsubscribeEvent subscribing (eventAddress : obj Address) (_ : Simulant) world =
+        static member internal handleSubscribeAndUnsubscribeEvent subscribing (eventAddress : Address) (_ : Simulant) world =
             // here we need to update the event publish flags for entities based on whether there are subscriptions to
             // these events. These flags exists solely for efficiency reasons. We also look for subscription patterns
             // that these optimizations do not support, and warn the developer if they are invoked. Additionally, we
             // warn if the user attempts to subscribe to a Change event with a wildcard as doing so is not supported.
-            let eventNames = Address.getNames eventAddress
+            let eventNames = eventAddress.Names
             let eventNamesLength = Array.length eventNames
             let world =
                 if eventNamesLength >= 6 then
@@ -660,8 +805,8 @@ module WorldModule2 =
                     match eventFirstName with
                     | "Update" ->
 #if DEBUG
-                        if  Array.contains Address.WildcardName eventNames ||
-                            Array.contains Address.EllipsisName eventNames then
+                        if  Array.contains Constants.Address.WildcardName eventNames ||
+                            Array.contains Constants.Address.EllipsisName eventNames then
                             Log.error
                                 ("Subscribing to entity update events with a wildcard or ellipsis is not supported. " +
                                  "This will cause a bug where some entity update events are not published.")
@@ -675,7 +820,7 @@ module WorldModule2 =
                     match eventNames.[0] with
                     | "Change" ->
                         let world =
-                            if eventNamesLength >= 6 then
+                            if eventNamesLength >= 7 then
                                 let entityAddress = rtoa (Array.skip 3 eventNames)
                                 let entity = Nu.Entity entityAddress
                                 match World.tryGetKeyedValueFast<UMap<Entity Address, int>> (EntityChangeCountsKey, world) with
@@ -705,8 +850,8 @@ module WorldModule2 =
                                     let world = if entity.GetExists world then World.setEntityPublishChangeEvents true entity world |> snd' else world
                                     World.mapKeyValueStore (SUMap.add EntityChangeCountsKey (UMap.add entityAddress 1 entityChangeCounts)) world // no event
                             else world
-                        if  Array.contains Address.WildcardName eventNames ||
-                            Array.contains Address.EllipsisName eventNames then
+                        if  Array.contains Constants.Address.WildcardName eventNames ||
+                            Array.contains Constants.Address.EllipsisName eventNames then
                             Log.error "Subscribing to change events with a wildcard or ellipsis is not supported."
                         world
                     | _ -> world
@@ -732,13 +877,13 @@ module WorldModule2 =
             for entity in entities2d do
                 let entityState = World.getEntityState entity world
                 let element = Quadelement.make entityState.VisibleSpatial entityState.StaticSpatial entity
-                Quadtree.addElement entityState.Presence entityState.Bounds.Box2 element quadtree
+                Quadtree.addElement entityState.PresenceSpatial entityState.Bounds.Box2 element quadtree
             if SList.notEmpty entities3d then
                 let octree = World.getOctree world
                 for entity in entities3d do
                     let entityState = World.getEntityState entity world
-                    let element = Octelement.make entityState.VisibleSpatial entityState.StaticSpatial entityState.LightProbe entityState.Light entityState.Presence entityState.Bounds entity
-                    Octree.addElement entityState.Presence entityState.Bounds element octree
+                    let element = Octelement.make entityState.VisibleSpatial entityState.StaticSpatial entityState.LightProbe entityState.Light entityState.PresenceSpatial entityState.Bounds entity
+                    Octree.addElement entityState.PresenceSpatial entityState.Bounds element octree
             world
                 
         static member internal evictScreenElements screen world =
@@ -748,33 +893,37 @@ module WorldModule2 =
             for entity in entities2d do
                 let entityState = World.getEntityState entity world
                 let element = Quadelement.make entityState.VisibleSpatial entityState.StaticSpatial entity
-                Quadtree.removeElement entityState.Presence entityState.Bounds.Box2 element quadtree
+                Quadtree.removeElement entityState.PresenceSpatial entityState.Bounds.Box2 element quadtree
             if SArray.notEmpty entities3d then
                 let octree = World.getOctree world
                 for entity in entities3d do
                     let entityState = World.getEntityState entity world
-                    let element = Octelement.make entityState.VisibleSpatial entityState.StaticSpatial entityState.LightProbe entityState.Light entityState.Presence entityState.Bounds entity
-                    Octree.removeElement entityState.Presence entityState.Bounds element octree
+                    let element = Octelement.make entityState.VisibleSpatial entityState.StaticSpatial entityState.LightProbe entityState.Light entityState.PresenceSpatial entityState.Bounds entity
+                    Octree.removeElement entityState.PresenceSpatial entityState.Bounds element octree
             world
 
-        static member internal registerScreenPhysics screen world =
+        static member internal registerScreenPhysics only3dHack screen world =
             let entities =
                 World.getGroups screen world |>
                 Seq.map (flip World.getEntities world) |>
                 Seq.concat |>
                 SList.ofSeq
             SList.fold (fun world (entity : Entity) ->
-                World.registerEntityPhysics entity world)
+                if not only3dHack || entity.GetIs3d world
+                then World.registerEntityPhysics entity world
+                else world)
                 world entities
 
-        static member internal unregisterScreenPhysics screen world =
+        static member internal unregisterScreenPhysics only3dHack screen world =
             let entities =
                 World.getGroups screen world |>
                 Seq.map (flip World.getEntities world) |>
                 Seq.concat |>
                 SList.ofSeq
             SList.fold (fun world (entity : Entity) ->
-                World.unregisterEntityPhysics entity world)
+                if not only3dHack || entity.GetIs3d world
+                then World.unregisterEntityPhysics entity world
+                else world)
                 world entities
 
         /// Try to reload the overlayer currently in use by the world.
@@ -808,6 +957,7 @@ module WorldModule2 =
             let world = World.reloadPhysicsAssets world
             let world = World.reloadRenderAssets2d world
             let world = World.reloadRenderAssets3d world
+            let world = World.reloadRenderAssetsImGui world
             let world = World.reloadAudioAssets world
             let world = World.reloadSymbols world
             world
@@ -916,9 +1066,11 @@ module WorldModule2 =
             let taskletsNotRun = OMap.filter (fun simulant _ -> World.getExists simulant world) taskletsNotRun
             World.restoreTasklets taskletsNotRun world
 
-        static member private processImNui world =
-            WorldImNui.Reinitializing <- false
-            World.sweepImNui world
+        static member private processImNui (world : World) =
+            if world.Advancing then
+                WorldImNui.Reinitializing <- false
+                World.sweepSimulants world
+            else world
 
         static member private destroySimulants world =
             let destructionListRev = World.getDestructionListRev world
@@ -1237,10 +1389,10 @@ module WorldModule2 =
             let octree = World.getOctree world
             Octree.sweep octree
 
-        /// Run ImNui for a single frame.
-        /// Needed only as a hack for Gaia and other accompanying context to ensure ImGui simulants are created at a
-        /// meaningful time.
-        static member runImNui (world : World) =
+        /// Process ImNui for a single frame.
+        /// HACK: needed only as a hack for Gaia and other accompanying programs to ensure ImGui simulants are created at a
+        /// meaningful time. Do NOT call this in the course of normal operations!
+        static member tryProcessSimulants (world : World) =
 
             // use a finally block to free cached values
             try
@@ -1254,25 +1406,25 @@ module WorldModule2 =
                 World.getElements2dInPlay HashSet2dNormalCached world
                 world.Timers.UpdateGatherTimer.Stop ()
 
-                // run game
+                // attempt to process game
                 world.Timers.UpdateGameTimer.Restart ()
-                let world = World.tryRunGame game world
+                let world = World.tryProcessGame game world
                 world.Timers.UpdateGameTimer.Stop ()
 
-                // run screen if any
+                // attempt to process screen if any
                 world.Timers.UpdateScreensTimer.Restart ()
-                let world = Option.fold (fun world (screen : Screen) -> if screen.GetExists world then World.tryRunScreen screen world else world) world screenOpt
+                let world = Option.fold (fun world (screen : Screen) -> if screen.GetExists world then World.tryProcessScreen screen world else world) world screenOpt
                 world.Timers.UpdateScreensTimer.Stop ()
 
-                // update groups
+                // attempt to process groups
                 world.Timers.UpdateGroupsTimer.Restart ()
-                let world = Seq.fold (fun world (group : Group) -> if group.GetExists world then World.tryRunGroup group world else world) world groups
+                let world = Seq.fold (fun world (group : Group) -> if group.GetExists world then World.tryProcessGroup group world else world) world groups
                 world.Timers.UpdateGroupsTimer.Stop ()
 
-                // update entities
+                // attempt to process entities
                 world.Timers.UpdateEntitiesTimer.Restart ()
-                let world = Seq.fold (fun world (element : Entity Octelement) -> if element.Entry.GetExists world then World.tryRunEntity element.Entry world else world) world HashSet3dNormalCached
-                let world = Seq.fold (fun world (element : Entity Quadelement) -> if element.Entry.GetExists world then World.tryRunEntity element.Entry world else world) world HashSet2dNormalCached
+                let world = Seq.fold (fun world (element : Entity Octelement) -> if element.Entry.GetExists world then World.tryProcessEntity element.Entry world else world) world HashSet3dNormalCached
+                let world = Seq.fold (fun world (element : Entity Quadelement) -> if element.Entry.GetExists world then World.tryProcessEntity element.Entry world else world) world HashSet2dNormalCached
                 world.Timers.UpdateEntitiesTimer.Stop ()
 
                 // fin
@@ -1283,21 +1435,50 @@ module WorldModule2 =
                 HashSet3dNormalCached.Clear ()
                 HashSet2dNormalCached.Clear ()
 
-        static member internal sweepImNui (world : World) =
-            if world.Advancing then
-                OMap.fold (fun world simulant simulantImNui ->
-                    if not simulantImNui.Utilized then
-                        let world = World.destroy simulant world
-                        World.setSimulantImNuis (OMap.remove simulant world.SimulantImNuis) world
+        static member internal sweepSimulants (world : World) =
+
+            // update simulant bookkeeping, collecting simulants to destroy in the process
+            let world =
+                SUMap.fold (fun world simulantAddress simulantImNui ->
+                    if not simulantImNui.SimulantUtilized then
+                        let simulant = World.deriveFromAddress simulantAddress
+                        ImNuiSimulantsToDestroy.Add (simulantImNui.InitializationTime, simulant)
+                        World.setSimulantImNuis (SUMap.remove simulantAddress world.SimulantImNuis) world
                     else
                         if world.Imperative then
-                            simulantImNui.Utilized <- false
+                            simulantImNui.SimulantUtilized <- false
+                            simulantImNui.SimulantInitializing <- false
                             world
                         else
-                            let world = World.setSimulantImNuis (OMap.add simulant { simulantImNui with Utilized = false } world.SimulantImNuis) world
-                            world)
+                            let simulantImNuis = SUMap.add simulantAddress { simulantImNui with SimulantUtilized = false; SimulantInitializing = false } world.SimulantImNuis
+                            World.setSimulantImNuis simulantImNuis world)
                     world world.SimulantImNuis
-            else world
+            ImNuiSimulantsToDestroy.Sort SimulantImNuiComparer
+
+            // destroy simulants
+            let world =
+                Seq.fold
+                    (fun world (_, simulant) -> World.destroy simulant world)
+                    world ImNuiSimulantsToDestroy
+            ImNuiSimulantsToDestroy.Clear ()
+
+            // update subscription bookkeeping
+            let world =
+                SUMap.fold (fun world subscriptionKey subscriptionImNui ->
+                    if not subscriptionImNui.SubscriptionUtilized then
+                        let world = World.unsubscribe subscriptionImNui.SubscriptionId world
+                        World.setSubscriptionImNuis (SUMap.remove subscriptionKey world.SubscriptionImNuis) world
+                    else
+                        if world.Imperative then
+                            subscriptionImNui.SubscriptionUtilized <- false
+                            world
+                        else
+                            let simulantImNuis = SUMap.add subscriptionKey { subscriptionImNui with SubscriptionUtilized = false } world.SubscriptionImNuis
+                            World.setSubscriptionImNuis simulantImNuis world)
+                    world world.SubscriptionImNuis
+
+            // fin
+            world
 
         static member private preUpdateSimulants (world : World) =
 
@@ -1344,7 +1525,7 @@ module WorldModule2 =
 
                 // update game
                 world.Timers.UpdateGameTimer.Restart ()
-                let world = World.tryRunGame game world
+                let world = World.tryProcessGame game world
                 let world = if advancing then World.updateGame game world else world
                 world.Timers.UpdateGameTimer.Stop ()
 
@@ -1352,7 +1533,7 @@ module WorldModule2 =
                 world.Timers.UpdateScreensTimer.Restart ()
                 let world =
                     Option.fold (fun world (screen : Screen) ->
-                        let world = if screen.GetExists world then World.tryRunScreen screen world else world
+                        let world = if screen.GetExists world then World.tryProcessScreen screen world else world
                         let world = if advancing && screen.GetExists world then World.updateScreen screen world else world
                         world)
                         world screenOpt
@@ -1362,7 +1543,7 @@ module WorldModule2 =
                 world.Timers.UpdateGroupsTimer.Restart ()
                 let world =
                     Seq.fold (fun world (group : Group) ->
-                        let world = if group.GetExists world then World.tryRunGroup group world else world
+                        let world = if group.GetExists world then World.tryProcessGroup group world else world
                         let world = if advancing && group.GetExists world then World.updateGroup group world else world
                         world)
                         world groups
@@ -1374,7 +1555,7 @@ module WorldModule2 =
                     Seq.fold (fun world (element : Entity Octelement) ->
                         let world =
                             if element.Entry.GetExists world
-                            then World.tryRunEntity element.Entry world
+                            then World.tryProcessEntity element.Entry world
                             else world
                         let world =
                             if element.Entry.GetExists world && (advancing && not (element.Entry.GetStatic world) || element.Entry.GetAlwaysUpdate world)
@@ -1386,7 +1567,7 @@ module WorldModule2 =
                     Seq.fold (fun world (element : Entity Quadelement) ->
                         let world =
                             if element.Entry.GetExists world
-                            then World.tryRunEntity element.Entry world
+                            then World.tryProcessEntity element.Entry world
                             else world
                         let world =
                             if element.Entry.GetExists world && (advancing && not (element.Entry.GetStatic world) || element.Entry.GetAlwaysUpdate world)
@@ -1499,7 +1680,7 @@ module WorldModule2 =
                     for element in hashSet do
                         if element.Static then
                             HashSet3dNormalCached.Add element |> ignore<bool>
-                | ShadowPass (_, shadowDirectional, _, shadowFrustum) -> World.getElements3dInViewFrustum (not shadowDirectional) true shadowFrustum HashSet3dNormalCached world
+                | ShadowPass (_, shadowLightType, _, shadowFrustum) -> World.getElements3dInViewFrustum (shadowLightType <> DirectionalLight) true shadowFrustum HashSet3dNormalCached world
                 | ReflectionPass (_, _) -> ()
                 match renderPass with
                 | NormalPass -> World.getElements2dInView HashSet2dNormalCached world
@@ -1579,16 +1760,18 @@ module WorldModule2 =
                 let lightBox = World.getLight3dBox world
                 let lights = World.getLights3dInBox lightBox HashSet3dShadowCached world // NOTE: this may not be the optimal way to query.
                 let eyeCenter = World.getEye3dCenter world
-                let sortableShadowPassDescriptors =
+                let shadowPassDescriptorsSortable =
                     [|for light in lights do
                         if light.GetDesireShadows world then
-                            let (directional, coneOuter) =
-                                match light.GetLightType world with
-                                | PointLight -> (false, MathF.TWO_PI)
-                                | SpotLight (_, coneOuter)-> (false, coneOuter)
-                                | DirectionalLight -> (true, 0.0f)
+                            let lightType = light.GetLightType world
                             let (shadowView, shadowProjection) =
-                                if not directional then
+                                match lightType with
+                                | PointLight ->
+                                    let shadowView = Matrix4x4.CreateTranslation (-light.GetPosition world)
+                                    let shadowCutoff = max (light.GetLightCutoff world) 0.1f
+                                    let shadowProjection = Matrix4x4.CreateOrthographic (shadowCutoff * 2.0f, shadowCutoff * 2.0f, -shadowCutoff, shadowCutoff)
+                                    (shadowView, shadowProjection)
+                                | SpotLight (_, coneOuter)->
                                     let shadowRotation = light.GetRotation world
                                     let mutable shadowView = Matrix4x4.CreateFromYawPitchRoll (0.0f, -MathF.PI_OVER_2, 0.0f) * Matrix4x4.CreateFromQuaternion shadowRotation
                                     shadowView.Translation <- light.GetPosition world
@@ -1597,7 +1780,7 @@ module WorldModule2 =
                                     let shadowCutoff = max (light.GetLightCutoff world) 0.1f
                                     let shadowProjection = Matrix4x4.CreatePerspectiveFieldOfView (shadowFov, 1.0f, Constants.Render.NearPlaneDistanceInterior, shadowCutoff)
                                     (shadowView, shadowProjection)
-                                else
+                                | DirectionalLight ->
                                     let shadowRotation = light.GetRotation world
                                     let mutable shadowView = Matrix4x4.CreateFromYawPitchRoll (0.0f, -MathF.PI_OVER_2, 0.0f) * Matrix4x4.CreateFromQuaternion shadowRotation
                                     shadowView.Translation <- light.GetPosition world
@@ -1617,21 +1800,38 @@ module WorldModule2 =
                                 | Imposter -> frustumImposter.Intersects shadowFrustum
                                 | Omnipresent -> true
                             if shadowInView then
-                                let directionalSort = if not directional then 1 else 0
+                                let directionalSort = if lightType = DirectionalLight then 1 else 0 // directional lights come first to attempt to grab the detailed shadow texture
                                 let distanceSquared = Vector3.DistanceSquared (eyeCenter, light.GetPosition world)
                                 struct (struct (directionalSort, distanceSquared), struct (shadowFrustum, light))|]
 
-                // render simulant shadows in descriptor sort order
-                let world =
-                    sortableShadowPassDescriptors |>
+                // sort shadow pass descriptors
+                let shadowPassDescriptors =
+                    shadowPassDescriptorsSortable |>
                     Array.sortBy fst' |>
-                    Array.tryTake Constants.Render.ShadowsMax |>
-                    Array.fold (fun world struct (struct (directionalSort, _), struct (shadowFrustum, light)) ->
-                        let shadowRotation = light.GetRotation world * Quaternion.CreateFromAxisAngle (v3Right, -MathF.PI_OVER_2)
-                        World.renderSimulantsInternal (ShadowPass (light.GetId world, isZero directionalSort, shadowRotation, shadowFrustum)) world)
-                        world
+                    Array.map snd'
 
-                // render simulants normally, remember to clear 3d shadow cache
+                // render simulant shadows
+                let mutable shadowTexturesCount = 0
+                let mutable shadowMapsCount = 0
+                let world =
+                    Array.fold (fun world struct (shadowFrustum, light : Entity) ->
+                        let lightType = light.GetLightType world
+                        match lightType with
+                        | PointLight ->
+                            if shadowMapsCount < Constants.Render.ShadowMapsMax then
+                                let world = World.renderSimulantsInternal (ShadowPass (light.GetId world, lightType, light.GetRotation world, shadowFrustum)) world
+                                shadowMapsCount <- inc shadowMapsCount
+                                world
+                            else world
+                        | SpotLight (_, _) | DirectionalLight ->
+                            if shadowTexturesCount < Constants.Render.ShadowTexturesMax then
+                                let world = World.renderSimulantsInternal (ShadowPass (light.GetId world, lightType, light.GetRotation world, shadowFrustum)) world
+                                shadowTexturesCount <- inc shadowTexturesCount
+                                world
+                            else world)
+                        world shadowPassDescriptors
+
+                // render simulants normally
                 World.renderSimulantsInternal NormalPass world
 
             // free cached values
@@ -1640,6 +1840,8 @@ module WorldModule2 =
 
         static member private processInput world =
             if SDL.SDL_WasInit SDL.SDL_INIT_TIMER <> 0u then
+                MouseState.update ()
+                KeyboardState.update ()
                 let mutable result = (World.getLiveness world, world)
                 let mutable polledEvent = SDL.SDL_Event ()
                 while
@@ -1822,7 +2024,7 @@ module WorldModule2 =
                                                                                 if timeToSleep > 0.008 then Thread.Sleep 7
                                                                                 elif timeToSleep > 0.004 then Thread.Sleep 3
                                                                                 elif timeToSleep > 0.002 then Thread.Sleep 1
-                                                                                else Thread.Yield () |> ignore<bool> // NOTE: this seems to cause 100% core utilizaiton on linux. Perhaps we should special case for linux to use Sleep (0|1) instead?
+                                                                                else Thread.Yield () |> ignore<bool>
 
                                                                         // fin
                                                                         world
@@ -1916,113 +2118,39 @@ module WorldModule2 =
 module EntityDispatcherModule2 =
 
     /// The ImNui dispatcher for entities.
-    type [<AbstractClass>] EntityDispatcher<'model>
-        (is2d, physical, lightProbe, light, makeInitial : World -> 'model) =
+    type [<AbstractClass>] EntityDispatcherImNui (is2d, physical, lightProbe, light) =
         inherit EntityDispatcher (is2d, physical, lightProbe, light)
-
-        new (is2d, physical, lightProbe, light, initial : 'model) =
-            EntityDispatcher<'model> (is2d, physical, lightProbe, light, fun _ -> initial)
 
         static member Properties =
             [define Entity.Presence Omnipresent]
 
-        /// Get the entity's model.
-        member this.GetModel (entity : Entity) world : 'model =
-            entity.GetModelGeneric<'model> world
-
-        /// Set the entity's model.
-        member this.SetModel (model : 'model) (entity : Entity) world =
-            entity.SetModelGeneric<'model> model world
-
-        /// The entity's model lens.
-        member this.Model (entity : Entity) =
-            lens (nameof this.Model) entity (this.GetModel entity) (flip this.SetModel entity)
-
-        override this.Register (entity, world) =
-            let property = World.getEntityModelProperty entity world
-            let model =
-                match property.DesignerValue with
-                | _ when property.DesignerType = typeof<unit> -> makeInitial world
-                | :? 'model as model -> model
-                | null -> null :> obj :?> 'model
-                | modelObj ->
-                    try let model = modelObj |> valueToSymbol |> symbolToValue
-                        property.DesignerType <- typeof<'model>
-                        property.DesignerValue <- model
-                        model
-                    with _ ->
-                        Log.warnOnce "Could not convert existing entity model to new type. Falling back on initial model value."
-                        makeInitial world
-            World.setEntityModelGeneric<'model> false model entity world |> snd'
-
-        override this.TryRun (entity, world) =
-            let model = entity.GetModelGeneric<'model> world
+        override this.TryProcess (entity, world) =
             let context = world.ContextImNui
             let world = World.scopeEntity entity [] world
-            let (model, world) = this.Run (model, entity, world)
-            let world = World.advanceContext entity.EntityAddress context world
-            this.SetModel model entity world
+            let world = this.Process (entity, world)
+#if DEBUG
+            if world.ContextImNui <> entity.EntityAddress then
+                Log.warnOnce
+                    ("ImNui context expected to be " +
+                     scstring entity.EntityAddress + " but was " +
+                     scstring world.ContextImNui + ". Did you forget to call the appropriate World.end function?")
+#endif
+            World.advanceContext entity.EntityAddress context world
 
-        override this.Edit (operation, entity, world) =
-            let model = entity.GetModelGeneric<'model> world
-            let (model, world) = this.Edit (model, operation, entity, world)
-            this.SetModel model entity world
+        /// ImNui process an entity.
+        abstract Process : Entity * World -> World
+        default this.Process (_, world) = world
 
-        override this.TryGetFallbackModel<'a> (modelSymbol, entity, world) =
-            this.GetFallbackModel (modelSymbol, entity, world) :> obj :?> 'a |> Some
-
-        override this.TryTruncateModel<'a> (model : 'a) =
-            match model :> obj with
-            | :? 'model as model -> Some (this.TruncateModel model :> obj :?> 'a)
-            | _ -> None
-
-        override this.TryUntruncateModel<'a> (incoming : 'a, entity, world) =
-            match incoming :> obj with
-            | :? 'model as incoming ->
-                let current = entity.GetModelGeneric<'model> world
-                Some (this.UntruncateModel (current, incoming) :> obj :?> 'a)
-            | _ -> None
-
-        /// The fallback model value.
-        abstract GetFallbackModel : Symbol * Entity * World -> 'model
-        default this.GetFallbackModel (_, _, world) = makeInitial world
-
-        /// The run handler of the ImNui programming model.
-        abstract Run : 'model * Entity * World -> 'model * World
-        default this.Run (model, _, world) = (model, world)
-
-        /// Implements additional editing behavior for an entity via the ImGui API.
-        abstract Edit : 'model * EditOperation * Entity * World -> 'model * World
-        default this.Edit (model, _, _, world) = (model, world)
-
-        /// Render the entity using the given model.
-        abstract Render : 'model * RenderPass * Entity * World -> unit
-        default this.Render (_, _, _, _) = ()
-
-        /// Truncate the given model.
-        abstract TruncateModel : 'model -> 'model
-        default this.TruncateModel model = model
-
-        /// Untruncate the given model.
-        abstract UntruncateModel : 'model * 'model -> 'model
-        default this.UntruncateModel (_, incoming) = incoming
-
-    /// A 2d entity dispatcher.
-    type [<AbstractClass>] Entity2dDispatcher<'model> (physical, lightProbe, light, makeInitial : World -> 'model) =
-        inherit EntityDispatcher<'model> (true, physical, lightProbe, light, makeInitial)
-
-        new (physical, lightProbe, light, initial : 'model) =
-            Entity2dDispatcher<'model> (physical, lightProbe, light, fun _ -> initial)
+    /// An ImNui 2d entity dispatcher.
+    type [<AbstractClass>] Entity2dDispatcherImNui (physical, lightProbe, light) =
+        inherit EntityDispatcherImNui (true, physical, lightProbe, light)
 
         static member Properties =
             [define Entity.Size Constants.Engine.Entity2dSizeDefault]
 
-    /// A gui entity dispatcher.
-    type [<AbstractClass>] GuiDispatcher<'model> (makeInitial : World -> 'model) =
-        inherit EntityDispatcher<'model> (true, false, false, false, makeInitial)
-
-        new (initial : 'model) =
-            GuiDispatcher<'model> (fun _ -> initial)
+    /// An ImNui gui entity dispatcher.
+    type [<AbstractClass>] GuiDispatcherImNui () =
+        inherit EntityDispatcherImNui (true, false, false, false)
 
         static member Facets =
             [typeof<LayoutFacet>]
@@ -2030,19 +2158,16 @@ module EntityDispatcherModule2 =
         static member Properties =
             [define Entity.Absolute true
              define Entity.Presence Omnipresent
-             define Entity.DisabledColor Constants.Gui.DisabledColorDefault
+             define Entity.ColorDisabled Constants.Gui.ColorDisabledDefault
              define Entity.Layout Manual
              define Entity.LayoutMargin v2Zero
              define Entity.LayoutOrder 0
              define Entity.DockType DockCenter
              define Entity.GridPosition v2iZero]
 
-    /// A 3d entity dispatcher.
-    type [<AbstractClass>] Entity3dDispatcher<'model> (physical, lightProbe, light, makeInitial : World -> 'model) =
-        inherit EntityDispatcher<'model> (false, physical, lightProbe, light, makeInitial)
-
-        new (physical, lightProbe, light, initial : 'model) =
-            Entity3dDispatcher<'model> (physical, lightProbe, light, fun _ -> initial)
+    /// An ImNui 3d entity dispatcher.
+    type [<AbstractClass>] Entity3dDispatcherImNui (physical, lightProbe, light) =
+        inherit EntityDispatcherImNui (false, physical, lightProbe, light)
 
         static member Properties =
             [define Entity.Size Constants.Engine.Entity3dSizeDefault]
@@ -2054,9 +2179,9 @@ module EntityDispatcherModule2 =
                 else [||]
             else base.RayCast (ray, entity, world)
 
-    /// A vui dispatcher (gui in 3d).
-    type [<AbstractClass>] VuiDispatcher<'model> (makeInitial : World -> 'model) =
-        inherit EntityDispatcher<'model> (false, false, false, false, makeInitial)
+    /// An ImNui vui dispatcher (gui in 3d).
+    type [<AbstractClass>] VuiDispatcherImNui () =
+        inherit EntityDispatcherImNui (false, false, false, false)
 
         static member Properties =
             [define Entity.Size Constants.Engine.EntityVuiSizeDefault]
@@ -2233,7 +2358,7 @@ module EntityDispatcherModule2 =
         static member Properties =
             [define Entity.Absolute true
              define Entity.Presence Omnipresent
-             define Entity.DisabledColor Constants.Gui.DisabledColorDefault
+             define Entity.ColorDisabled Constants.Gui.ColorDisabledDefault
              define Entity.Layout Manual
              define Entity.LayoutMargin v2Zero
              define Entity.LayoutOrder 0
@@ -2263,20 +2388,6 @@ module EntityDispatcherModule2 =
 
         static member Properties =
             [define Entity.Size Constants.Engine.EntityVuiSizeDefault]
-
-    /// Dynamically augments an entity's behavior in a composable way via ImNui.
-    type FacetImNui (physical, lightProbe, light) =
-        inherit Facet (physical, lightProbe, light)
-
-        override this.TryRun (entity, world) =
-            let context = world.ContextImNui
-            let world = World.scopeEntity entity [] world
-            let world = this.Run (entity, world)
-            World.advanceContext entity.EntityAddress context world
-
-        /// The run handler of the ImNui programming model.
-        abstract Run : Entity * World -> World
-        default this.Run (_, world) = world
 
 [<RequireQualifiedAccess>]
 module EntityPropertyDescriptor =
@@ -2311,12 +2422,14 @@ module EntityPropertyDescriptor =
              propertyName = "Scale" || propertyName = "ScaleLocal" ||
              propertyName = "Size" then
              "Basic Transform Properties"
+        elif propertyName = "Incoming" || propertyName = "Outgoing" then
+             "Transition Properties"
         elif List.exists (fun (property : PropertyDefinition) -> propertyName = property.PropertyName) baseProperties then "Configuration Properties"
         elif propertyName = "MaterialProperties" then "Material Properties"
         elif propertyName = "Material" then "Material Properties 2"
         elif propertyName = "NavShape" || propertyName = "Nav3dConfig" then "Navigation Properties"
         elif List.exists (fun (property : PropertyDefinition) -> propertyName = property.PropertyName) rigidBodyProperties then "Physics Properties"
-        else "Uncategorized Properties"
+        else "~ More Properties"
 
     let getEditable propertyDescriptor =
         let propertyName = propertyDescriptor.PropertyName
@@ -2325,6 +2438,8 @@ module EntityPropertyDescriptor =
             propertyName = Constants.Engine.PropagatedDescriptorOptPropertyName ||
             propertyName = "Rotation" ||
             propertyName = "RotationLocal" ||
+            propertyName = "Angles" ||
+            propertyName = "AnglesLocal" ||
             propertyName = "Light" ||
             propertyName = "LightProbe" then
             false
@@ -2393,88 +2508,25 @@ module EntityPropertyDescriptor =
 module GroupDispatcherModule =
 
     /// The ImNui dispatcher for groups.
-    type [<AbstractClass>] GroupDispatcher<'model> (makeInitial : World -> 'model) =
+    type [<AbstractClass>] GroupDispatcherImNui () =
         inherit GroupDispatcher ()
 
-        new (initial : 'model) =
-            GroupDispatcher<'model> (fun _ -> initial)
-
-        /// Get the group's model.
-        member this.GetModel (group : Group) world : 'model =
-            group.GetModelGeneric<'model> world
-
-        /// Set the group's model.
-        member this.SetModel (model : 'model) (group : Group) world =
-            group.SetModelGeneric<'model> model world
-
-        /// The group's model lens.
-        member this.Model (group : Group) =
-            lens (nameof this.Model) group (this.GetModel group) (flip this.SetModel group)
-
-        override this.Register (group, world) =
-            let property = World.getGroupModelProperty group world
-            let model =
-                match property.DesignerValue with
-                | _ when property.DesignerType = typeof<unit> -> makeInitial world
-                | :? 'model as model -> model
-                | null -> null :> obj :?> 'model
-                | modelObj ->
-                    try let model = modelObj |> valueToSymbol |> symbolToValue
-                        property.DesignerType <- typeof<'model>
-                        property.DesignerValue <- model
-                        model
-                    with _ ->
-                        Log.warnOnce "Could not convert existing group model to new type. Falling back on initial model value."
-                        makeInitial world
-            World.setGroupModelGeneric<'model> false model group world |> snd'
-
-        override this.TryRun (group, world) =
-            let model = group.GetModelGeneric<'model> world
+        override this.TryProcess (group, world) =
             let context = world.ContextImNui
             let world = World.scopeGroup group [] world
-            let (model, world) = this.Run (model, group, world)
-            let world = World.advanceContext group.GroupAddress context world
-            this.SetModel model group world
+            let world = this.Process (group, world)
+#if DEBUG
+            if world.ContextImNui <> group.GroupAddress then
+                Log.warnOnce
+                    ("ImNui context expected to be " +
+                     scstring group.GroupAddress + " but was " +
+                     scstring world.ContextImNui + ". Did you forget to call the appropriate World.end function?")
+#endif
+            World.advanceContext group.GroupAddress context world
 
-        override this.Edit (operation, group, world) =
-            let model = group.GetModelGeneric<'model> world
-            let (model, world) = this.Edit (model, operation, group, world)
-            this.SetModel model group world
-
-        override this.TryGetFallbackModel<'a> (modelSymbol, group, world) =
-            this.GetFallbackModel (modelSymbol, group, world) :> obj :?> 'a |> Some
-
-        override this.TryTruncateModel<'a> (model : 'a) =
-            match model :> obj with
-            | :? 'model as model -> Some (this.TruncateModel model :> obj :?> 'a)
-            | _ -> None
-
-        override this.TryUntruncateModel<'a> (incoming : 'a, group, world) =
-            match incoming :> obj with
-            | :? 'model as incoming ->
-                let current = group.GetModelGeneric<'model> world
-                Some (this.UntruncateModel (current, incoming) :> obj :?> 'a)
-            | _ -> None
-
-        /// The fallback model value.
-        abstract GetFallbackModel : Symbol * Group * World -> 'model
-        default this.GetFallbackModel (_, _, world) = makeInitial world
-
-        /// The run handler of the ImNui programming model.
-        abstract Run : 'model * Group * World -> 'model * World
-        default this.Run (model, _, world) = (model, world)
-
-        /// Implements additional editing behavior for a group via the ImGui API.
-        abstract Edit : 'model * EditOperation * Group * World -> 'model * World
-        default this.Edit (model, _, _, world) = (model, world)
-
-        /// Truncate the given model.
-        abstract TruncateModel : 'model -> 'model
-        default this.TruncateModel model = model
-
-        /// Untruncate the given model.
-        abstract UntruncateModel : 'model * 'model -> 'model
-        default this.UntruncateModel (_, incoming) = incoming
+        /// ImNui process a group.
+        abstract Process : Group * World -> World
+        default this.Process (_, world) = world
 
     type World with
 
@@ -2660,88 +2712,25 @@ module GroupPropertyDescriptor =
 module ScreenDispatcherModule =
 
     /// The ImNui dispatcher for screens.
-    type [<AbstractClass>] ScreenDispatcher<'model> (makeInitial : World -> 'model) =
+    type [<AbstractClass>] ScreenDispatcherImNui () =
         inherit ScreenDispatcher ()
 
-        new (initial : 'model) =
-            ScreenDispatcher<'model> (fun _ -> initial)
-
-        /// Get the screen's model.
-        member this.GetModel (screen : Screen) world : 'model =
-            screen.GetModelGeneric<'model> world
-
-        /// Set the screen's model.
-        member this.SetModel (model : 'model) (screen : Screen) world =
-            screen.SetModelGeneric<'model> model world
-
-        /// The screen's model lens.
-        member this.Model (screen : Screen) =
-            lens (nameof this.Model) screen (this.GetModel screen) (flip this.SetModel screen)
-
-        override this.Register (screen, world) =
-            let property = World.getScreenModelProperty screen world
-            let model =
-                match property.DesignerValue with
-                | _ when property.DesignerType = typeof<unit> -> makeInitial world
-                | :? 'model as model -> model
-                | null -> null :> obj :?> 'model
-                | modelObj ->
-                    try let model = modelObj |> valueToSymbol |> symbolToValue
-                        property.DesignerType <- typeof<'model>
-                        property.DesignerValue <- model
-                        model
-                    with _ ->
-                        Log.warnOnce "Could not convert existing screen model to new type. Falling back on initial model value."
-                        makeInitial world
-            World.setScreenModelGeneric<'model> false model screen world |> snd'
-
-        override this.TryRun (screen, world) =
-            let model = screen.GetModelGeneric<'model> world
+        override this.TryProcess (screen, world) =
             let context = world.ContextImNui
             let world = World.scopeScreen screen [] world
-            let (model, world) = this.Run (model, screen, world)
-            let world = World.advanceContext screen.ScreenAddress context world
-            this.SetModel model screen world
+            let world = this.Process (screen, world)
+#if DEBUG
+            if world.ContextImNui <> screen.ScreenAddress then
+                Log.warnOnce
+                    ("ImNui context expected to be " +
+                     scstring screen.ScreenAddress + " but was " +
+                     scstring world.ContextImNui + ". Did you forget to call World.endGroup?")
+#endif
+            World.advanceContext screen.ScreenAddress context world
 
-        override this.Edit (operation, screen, world) =
-            let model = screen.GetModelGeneric<'model> world
-            let (model, world) = this.Edit (model, operation, screen, world)
-            this.SetModel model screen world
-
-        override this.TryGetFallbackModel<'a> (modelSymbol, screen, world) =
-            this.GetFallbackModel (modelSymbol, screen, world) :> obj :?> 'a |> Some
-
-        override this.TryTruncateModel<'a> (model : 'a) =
-            match model :> obj with
-            | :? 'model as model -> Some (this.TruncateModel model :> obj :?> 'a)
-            | _ -> None
-
-        override this.TryUntruncateModel<'a> (incoming : 'a, screen, world) =
-            match incoming :> obj with
-            | :? 'model as incoming ->
-                let current = screen.GetModelGeneric<'model> world
-                Some (this.UntruncateModel (current, incoming) :> obj :?> 'a)
-            | _ -> None
-
-        /// The fallback model value.
-        abstract GetFallbackModel : Symbol * Screen * World -> 'model
-        default this.GetFallbackModel (_, _, world) = makeInitial world
-
-        /// The run handler of the ImNui programming model.
-        abstract Run : 'model * Screen * World -> 'model * World
-        default this.Run (model, _, world) = (model, world)
-
-        /// Implements additional editing behavior for a screen via the ImGui API.
-        abstract Edit : 'model * EditOperation * Screen * World -> 'model * World
-        default this.Edit (model, _, _, world) = (model, world)
-
-        /// Truncate the given model.
-        abstract TruncateModel : 'model -> 'model
-        default this.TruncateModel model = model
-
-        /// Untruncate the given model.
-        abstract UntruncateModel : 'model * 'model -> 'model
-        default this.UntruncateModel (_, incoming) = incoming
+        /// ImNui process a screen.
+        abstract Process : Screen * World -> World
+        default this.Process (_, world) = world
 
     type World with
 
@@ -2881,24 +2870,6 @@ module ScreenDispatcherModule =
         abstract UntruncateModel : 'model * 'model -> 'model
         default this.UntruncateModel (_, incoming) = incoming
 
-    type World with
-
-        /// Begin the ImNui declaration of a screen with the given arguments using a child group read from the given file path.
-        static member beginScreenWithGroupFromFilePlus<'d, 'r when 'd :> ScreenDispatcher> (zero : 'r) init name select behavior groupFilePath world args =
-            World.beginScreenPlus10<'d, 'r> zero init World.transitionScreen World.setScreenSlide name select behavior (Some groupFilePath) world args
-
-        /// Begin the ImNui declaration of a screen with the given arguments using a child group read from the given file path.
-        static member beginScreenWithGroupFromFile<'d when 'd :> ScreenDispatcher> name select behavior groupFilePath world args =
-            World.beginScreen8<'d> World.transitionScreen World.setScreenSlide name select behavior (Some groupFilePath) world args
-
-        /// Begin the ImNui declaration of a screen with the given arguments.
-        static member beginScreenPlus<'d, 'r when 'd :> ScreenDispatcher> zero init name select behavior world args =
-            World.beginScreenPlus10<'d, 'r> zero init World.transitionScreen World.setScreenSlide name select behavior None world args
-
-        /// Begin the ImNui declaration of a screen with the given arguments.
-        static member beginScreen<'d when 'd :> ScreenDispatcher> name select behavior world args =
-            World.beginScreen8<'d> World.transitionScreen World.setScreenSlide name select behavior None world args
-
 [<RequireQualifiedAccess>]
 module ScreenPropertyDescriptor =
 
@@ -2945,92 +2916,25 @@ module ScreenPropertyDescriptor =
 module GameDispatcherModule =
 
     /// The ImNui dispatcher for games.
-    type [<AbstractClass>] GameDispatcher<'model> (makeInitial : World -> 'model) =
+    type [<AbstractClass>] GameDispatcherImNui () =
         inherit GameDispatcher ()
 
-        new (initial : 'model) =
-            GameDispatcher<'model> (fun _ -> initial)
-
-        /// Get the game's model.
-        member this.GetModel (game : Game) world : 'model =
-            game.GetModelGeneric<'model> world
-
-        /// Set the game's model.
-        member this.SetModel (model : 'model) (game : Game) world =
-            game.SetModelGeneric<'model> model world
-
-        /// The game's model lens.
-        member this.Model (game : Game) =
-            lens (nameof this.Model) game (this.GetModel game) (flip this.SetModel game)
-
-        override this.Register (game, world) =
-            let property = World.getGameModelProperty game world
-            let model =
-                match property.DesignerValue with
-                | _ when property.DesignerType = typeof<unit> -> makeInitial world
-                | :? 'model as model -> model
-                | null -> null :> obj :?> 'model
-                | modelObj ->
-                    try let model = modelObj |> valueToSymbol |> symbolToValue
-                        property.DesignerType <- typeof<'model>
-                        property.DesignerValue <- model
-                        model
-                    with _ ->
-                        Log.warnOnce "Could not convert existing game model to new type. Falling back on initial model value."
-                        makeInitial world
-            World.setGameModelGeneric<'model> false model game world |> snd'
-
-        override this.TryRun (game, world) =
-            let model = game.GetModelGeneric<'model> world
+        override this.TryProcess (game, world) =
             let context = world.ContextImNui
             let world = World.scopeGame [] world
-            let (model, world) = this.Run (model, game, world)
-            let world = World.advanceContext game.GameAddress context world
-            this.SetModel model game world
+            let world = this.Process (game, world)
+#if DEBUG
+            if world.ContextImNui <> game.GameAddress then
+                Log.warnOnce
+                    ("ImNui context expected to be " +
+                     scstring game.GameAddress + " but was " +
+                     scstring world.ContextImNui + ". Did you forget to call World.endScreen?")
+#endif
+            World.advanceContext game.GameAddress context world
 
-        override this.Edit (operation, game, world) =
-            let model = game.GetModelGeneric<'model> world
-            let (model, world) = this.Edit (model, operation, game, world)
-            this.SetModel model game world
-
-        override this.TryGetFallbackModel<'a> (modelSymbol, game, world) =
-            this.GetFallbackModel (modelSymbol, game, world) :> obj :?> 'a |> Some
-
-        override this.TryTruncateModel<'a> (model : 'a) =
-            match model :> obj with
-            | :? 'model as model -> Some (this.TruncateModel model :> obj :?> 'a)
-            | _ -> None
-
-        override this.TryUntruncateModel<'a> (incoming : 'a, game, world) =
-            match incoming :> obj with
-            | :? 'model as incoming ->
-                let current = game.GetModelGeneric<'model> world
-                Some (this.UntruncateModel (current, incoming) :> obj :?> 'a)
-            | _ -> None
-
-        /// The fallback model value.
-        abstract GetFallbackModel : Symbol * Game * World -> 'model
-        default this.GetFallbackModel (_, _, world) = makeInitial world
-
-        /// The run handler of the ImNui programming model.
-        abstract Run : 'model * Game * World -> 'model * World
-        default this.Run (model, _, world) = (model, world)
-
-        /// Implements additional editing behavior for a game via the ImGui API.
-        abstract Edit : 'model * EditOperation * Game * World -> 'model * World
-        default this.Edit (model, _, _, world) = (model, world)
-
-        /// Render the game using the given model.
-        abstract Render : 'model * RenderPass * Game * World -> unit
-        default this.Render (_, _, _, _) = ()
-
-        /// Truncate the given model.
-        abstract TruncateModel : 'model -> 'model
-        default this.TruncateModel model = model
-
-        /// Untruncate the given model.
-        abstract UntruncateModel : 'model * 'model -> 'model
-        default this.UntruncateModel (_, incoming) = incoming
+        /// ImNui process a game.
+        abstract Process : Game * World -> World
+        default this.Process (_, world) = world
 
     type World with
 

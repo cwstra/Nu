@@ -1,27 +1,20 @@
 Nu Game Engine [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/bryanedds/Nu/blob/master/License.md)
-=
-
-UPDATE: **Omni Blade**, the first commercial game built with Nu, is **available on Steam NOW!** - https://store.steampowered.com/app/3089800/Omni_Blade/
-=
-
-![image](https://github.com/user-attachments/assets/81f64a06-ffac-487e-8a59-6ca827b4c67a)
-
-![image](https://github.com/user-attachments/assets/0789e71d-fc49-496c-b9fc-2c9855a9e8e7)
 
 **Live Nu Game Engine Support on Discord here -** https://discord.gg/BN79RxYAjD
 
 So... just what is the **Nu Game Engine**?
 
-*"The Nu Game Engine is the world's first practical functional 2D and 3D cross-platform game engine. Built in F#, it offers a declarative MVU-based API called MMCC (Model-Message-Command-Content). Nu offers a path to a future where game developers are liberated from the snowballing complexity of overly-imperative game programming styles. After 10,000 commits, the implementation has matured enough to prove both the efficacy and viability of functional programming techniques in games in terms of performance, programmability, and reliability. Nu currently utilizes SDL2, OpenGL, Aether 2D Physics, and Bullet 3D Physics."*
+*"The Nu Game Engine is the world's first practical functional 2D and 3D cross-platform game engine. Built in F#, it offers a declarative MVU-based API called MMCC (Model-Message-Command-Content). Additionally, we're now providing an even easier to learn ImGui-inspired API called 'ImNui'! Nu offers a path to a future where game developers are liberated from the snowballing complexity of overly-imperative game programming approaches. Nu's implementation has matured enough to prove both the efficacy and viability of functional and declarative programming in games. Nu currently utilizes SDL2, OpenGL, Aether 2D Physics, and Bullet 3D Physics."*
 
 ***"...everything that I can think of that makes games programming so awful seems to have a solution in your engine!"* - @Sigmoid**
 
 This repository hosts several projects, including -
 
-- the sample 2D demo game ['Breakout'](https://github.com/bryanedds/Nu/tree/master/Projects/Breakout).
-- the sample 2D puzzle game ['Twenty 48'](https://github.com/bryanedds/Nu/tree/master/Projects/Twenty%2048).
-- the sample 2D action game ['Blaze Vector'](https://github.com/bryanedds/Nu/tree/master/Projects/Blaze%20Vector).
-- the sample 3D project ['Terra Firma'](https://github.com/bryanedds/Nu/tree/master/Projects/Terra%20Firma).
+- the 2D arcade game tutorial, ['Breakout MMCC'](https://github.com/bryanedds/Nu/tree/master/Projects/Breakout%20Mmcc).
+- **NEW!** Breakout tutorial using the ImNui API, ['Breakout ImNui'](https://github.com/bryanedds/Nu/tree/master/Projects/Breakout%20ImNui).
+- the 2D puzzle game tutorial, ['Twenty 48'](https://github.com/bryanedds/Nu/tree/master/Projects/Twenty%2048).
+- the 2D action game tutorial, ['Blaze Vector'](https://github.com/bryanedds/Nu/tree/master/Projects/Blaze%20Vector).
+- the 3D third-person game sample, ['Terra Firma'](https://github.com/bryanedds/Nu/tree/master/Projects/Terra%20Firma).
 - the commercial game demo for ['Omni Blade'](https://github.com/bryanedds/Nu/tree/omni-blade/Projects/Omni%20Blade), full game available now here - https://store.steampowered.com/app/3089800/Omni_Blade/
 
 Getting Started with Nu
@@ -37,23 +30,20 @@ Some Media on the Nu Game Engine
 ![image](https://github.com/bryanedds/Nu/assets/1625560/54785591-6b39-4a27-939d-b2f3b29f9bf1)
 Real-time WYSIWYG editing with hot asset and live code reloading, and the ability to undo and redo gameplay.
 
-![image](https://github.com/user-attachments/assets/58e5fb9b-372a-4674-af4a-0b937268b3b4)
+![image](https://github.com/user-attachments/assets/fa88a1a5-e793-44cb-8113-4a6bf8468d4c)
 Photo-realistic yet user-friendly deferred, physically-based rendering.
 
-![image](https://github.com/user-attachments/assets/aa8bbaa8-d253-48c2-bac5-17a5cc3e1167)
+![image](https://github.com/user-attachments/assets/b9f9a7a5-e159-45e4-b220-984f24137b62)
 Rendering made efficient with instancing-by-default.
-
-![image](https://github.com/user-attachments/assets/6340fe57-1ad0-4204-bc19-9ee5f0f91f99)
-Editing said photo-realistic scene.
 
 ![image](https://github.com/user-attachments/assets/37ca553f-5a6c-4056-9177-a4e1f4cff54d)
 Our new soft-shadow, screen-space reflection, and volumetric fog systems.
 
-![image](https://user-images.githubusercontent.com/1625560/209454635-b55ecb09-bbb9-4d71-9bd8-fa715c51cd4c.png)
+![image](https://github.com/user-attachments/assets/0789e71d-fc49-496c-b9fc-2c9855a9e8e7)
 First class support for unified 2D game development in our fully realized 20-hour indie RPG, OmniBlade.
 
-![image](https://user-images.githubusercontent.com/1625560/209454643-7142731e-ede7-48d3-8a97-d691fd9263e7.png)
-A critical battle with evil itself!
+![image](https://github.com/user-attachments/assets/81f64a06-ffac-487e-8a59-6ca827b4c67a)
+Wandering the lake in Omni Blade.
 
 ![image](https://github.com/bryanedds/Nu/assets/1625560/c9f0a9a1-d071-48f7-9175-c0b08f5768f0)
 Directly editing the entire game state in the new editor.

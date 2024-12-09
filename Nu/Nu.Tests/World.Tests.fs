@@ -1,11 +1,12 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu.Tests
 open System
 open NUnit.Framework
 open Prime
 open Nu
+open Nu.Tests
 module WorldTests =
 
     let [<Test>] runEmptyFrameThenCleanUp () =

@@ -3,6 +3,7 @@ open System
 open System.Numerics
 open Prime
 open Nu
+open Twenty48
 
 // this is our MMCC model type representing gameplay.
 type GameplayMessage =
@@ -95,34 +96,10 @@ type GameplayDispatcher () =
     // here we describe the content of the game including the level, the hud, and the player
     override this.Content (gameplay, _) =
 
-        [// the gui group
-         Content.group Simulants.GameplayGui.Name []
-            [Content.button Simulants.GameplayQuit.Name
-                [Entity.Position == v3 232.0f -144.0f 0.0f
-                 Entity.Elevation == 10.0f
-                 Entity.Text == "Quit"
-                 Entity.ClickEvent => StartQuitting]]
-
-         // the scene group
+        [// the scene group
          Content.group Simulants.GameplayScene.Name []
 
-            [// score
-             Content.text "Score"
-                [Entity.Position == v3 232.0f 155.0f 0.0f
-                 Entity.Elevation == 10.0f
-                 Entity.Text := "Score: " + string gameplay.Score]
-
-             // game over
-             match gameplay.GameplayState with
-             | Playing true ->
-                Content.text "GameOver"
-                    [Entity.Position == v3 0.0f 155.0f 0.0f
-                     Entity.Elevation == 10.0f
-                     Entity.Justification == Justified (JustifyCenter, JustifyMiddle)
-                     Entity.Text == "Game Over!"]
-             | Playing false | Quit -> ()
-
-             // board
+            [// board
              let gutter = v3 4.0f 4.0f 0.0f
              let tileSize = v3 32.0f 32.0f 0.0f
              let tileOffset = (gameplay.BoardSize.V3 * tileSize + gutter * (gameplay.BoardSize - v2iOne).V3) * -0.5f
@@ -140,4 +117,26 @@ type GameplayDispatcher () =
                          Entity.Font == Assets.Gui.ClearSansFont
                          Entity.FontSizing := if tile.Value < 16384 then Some 12 else Some 8
                          Entity.TextColor == Color.GhostWhite
-                         Entity.BackdropImageOpt := Some (Assets.Gameplay.TileImage tile.Value)]]]]
+                         Entity.BackdropImageOpt := Some (Assets.Gameplay.TileImage tile.Value)]]
+
+             // score
+             Content.text "Score"
+                [Entity.Position == v3 232.0f 155.0f 0.0f
+                 Entity.Elevation == 10.0f
+                 Entity.Text := "Score: " + string gameplay.Score]
+
+             // game over
+             if gameplay.GameplayState = Playing true then
+                Content.text "GameOver"
+                    [Entity.Position == v3 0.0f 155.0f 0.0f
+                     Entity.Elevation == 10.0f
+                     Entity.Justification == Justified (JustifyCenter, JustifyMiddle)
+                     Entity.Text == "Game Over!"]]
+        
+         // the gui group
+         Content.group Simulants.GameplayGui.Name []
+            [Content.button Simulants.GameplayQuit.Name
+                [Entity.Position == v3 232.0f -144.0f 0.0f
+                 Entity.Elevation == 10.0f
+                 Entity.Text == "Quit"
+                 Entity.ClickEvent => StartQuitting]]]

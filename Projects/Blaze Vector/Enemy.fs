@@ -3,6 +3,7 @@ open System
 open System.Numerics
 open Prime
 open Nu
+open BlazeVector
 
 type [<SymbolicExpansion>] Enemy =
     { Health : int }
@@ -36,17 +37,18 @@ type EnemyDispatcher () =
     override this.Definitions (_, _) =
         [Entity.Size == v3 24.0f 48.0f 0.0f
          Entity.Static == false
-         Entity.Friction == 0.0f
-         Entity.AngularFactor == v3Zero
-         Entity.LinearDamping == 3.0f
-         Entity.GravityOverride == Some v3Zero
          Entity.BodyType == Dynamic
          Entity.BodyShape == CapsuleShape { Height = 0.5f; Radius = 0.25f; TransformOpt = None; PropertiesOpt = None }
+         Entity.Friction == 0.0f
+         Entity.LinearDamping == 3.0f
+         Entity.AngularFactor == v3Zero
+         Entity.GravityOverride == Some v3Zero
          Entity.CelCount == 6
          Entity.CelRun == 4
          Entity.CelSize == v2 48.0f 96.0f
          Entity.AnimationDelay == UpdateTime 8L
          Entity.AnimationSheet == Assets.Gameplay.EnemyImage
+         Entity.Observable == true
          Entity.UpdateEvent => Update
          Entity.BodyPenetrationEvent =|> fun evt -> Penetration evt.Data]
 

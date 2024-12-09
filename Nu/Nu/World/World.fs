@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
@@ -61,6 +61,7 @@ type Nu () =
             WorldTypes.getSelectedScreenIdling <- fun worldObj -> World.getSelectedScreenIdling (worldObj :?> World)
             WorldTypes.getSelectedScreenTransitioning <- fun worldObj -> World.getSelectedScreenTransitioning (worldObj :?> World)
             WorldTypes.handleSubscribeAndUnsubscribeEvent <- fun subscribing eventAddress subscriber worldObj -> World.handleSubscribeAndUnsubscribeEvent subscribing eventAddress subscriber (worldObj :?> World)
+            WorldTypes.createDefaultGroup <- fun screenObj worldObj -> let (screen, world) = World.createGroup (Some "Group") (screenObj :?> Screen) (worldObj :?> World) in (screen, world)
             WorldTypes.getEntityIs2d <- fun entityObj worldObj -> World.getEntityIs2d (entityObj :?> Entity) (worldObj :?> World)
 
             // init WorldModule F# reach-arounds
@@ -68,11 +69,14 @@ type Nu () =
             WorldModule.sortSubscriptionsByElevation <- fun subscriptions worldObj -> World.sortSubscriptionsByElevation subscriptions (worldObj :?> World)
             WorldModule.admitScreenElements <- fun screen world -> World.admitScreenElements screen world
             WorldModule.evictScreenElements <- fun screen world -> World.evictScreenElements screen world
-            WorldModule.registerScreenPhysics <- fun screen world -> World.registerScreenPhysics screen world
-            WorldModule.unregisterScreenPhysics <- fun screen world -> World.unregisterScreenPhysics screen world
+            WorldModule.registerScreenPhysics <- fun only3dHack screen world -> World.registerScreenPhysics only3dHack screen world
+            WorldModule.unregisterScreenPhysics <- fun only3dHack screen world -> World.unregisterScreenPhysics only3dHack screen world
             WorldModule.register <- fun simulant world -> World.register simulant world
             WorldModule.unregister <- fun simulant world -> World.unregister simulant world
-            WorldModule.tryRunEntity <- fun entity world -> World.tryRunEntity entity world
+            WorldModule.tryProcessGame <- fun game world -> World.tryProcessGame game world
+            WorldModule.tryProcessScreen <- fun screen world -> World.tryProcessScreen screen world
+            WorldModule.tryProcessGroup <- fun group world -> World.tryProcessGroup group world
+            WorldModule.tryProcessEntity <- fun entity world -> World.tryProcessEntity entity world
             WorldModule.signal <- Nu.worldModuleSignal
             WorldModule.destroyImmediate <- fun simulant world -> World.destroyImmediate simulant world
             WorldModule.destroy <- fun simulant world -> World.destroy simulant world
@@ -138,12 +142,15 @@ module WorldModule3 =
                  RadioButtonDispatcher ()
                  FillBarDispatcher ()
                  FeelerDispatcher ()
+                 TextBoxDispatcher ()
                  FpsDispatcher ()
                  PanelDispatcher ()
                  BasicStaticSpriteEmitterDispatcher ()
                  Effect2dDispatcher ()
                  Block2dDispatcher ()
                  Box2dDispatcher ()
+                 Sphere2dDispatcher ()
+                 Ball2dDispatcher ()
                  Character2dDispatcher ()
                  BodyJoint2dDispatcher ()
                  TileMapDispatcher ()
@@ -162,6 +169,8 @@ module WorldModule3 =
                  Effect3dDispatcher ()
                  Block3dDispatcher ()
                  Box3dDispatcher ()
+                 Sphere3dDispatcher ()
+                 Ball3dDispatcher ()
                  Character3dDispatcher ()
                  BodyJoint3dDispatcher ()
                  TerrainDispatcher ()
@@ -182,6 +191,7 @@ module WorldModule3 =
                  RadioButtonFacet ()
                  FillBarFacet ()
                  FeelerFacet ()
+                 TextBoxFacet ()
                  BasicStaticSpriteEmitterFacet ()
                  EffectFacet ()
                  RigidBodyFacet ()
@@ -274,7 +284,8 @@ module WorldModule3 =
             let worldExtension =
                 { ContextImNui = Address.empty
                   RecentImNui = Address.empty
-                  SimulantImNuis = OMap.makeEmpty HashIdentity.Structural config
+                  SimulantImNuis = SUMap.makeEmpty HashIdentity.Structural config
+                  SubscriptionImNuis = SUMap.makeEmpty HashIdentity.Structural config
                   DestructionListRev = []
                   Dispatchers = dispatchers
                   Plugin = plugin
@@ -324,7 +335,7 @@ module WorldModule3 =
                   GameDispatchers = Map.ofList [defaultGameDispatcher] }
 
             // make the world's subsystems
-            let imGui = ImGui (Constants.Render.Resolution.X, Constants.Render.Resolution.Y)
+            let imGui = ImGui (true, Constants.Render.Resolution.X, Constants.Render.Resolution.Y)
             let physicsEngine2d = StubPhysicsEngine.make ()
             let physicsEngine3d = StubPhysicsEngine.make ()
             let rendererProcess = RendererInline () :> RendererProcess
@@ -404,7 +415,7 @@ module WorldModule3 =
                     | None -> GameDispatcher ()
 
                 // make the world's subsystems, loading initial packages where applicable
-                let imGui = ImGui (Constants.Render.Resolution.X, Constants.Render.Resolution.Y)
+                let imGui = ImGui (false, Constants.Render.Resolution.X, Constants.Render.Resolution.Y)
                 let physicsEngine2d = PhysicsEngine2d.make (Constants.Physics.GravityDefault * Constants.Engine.Meter2d)
                 let physicsEngine3d = PhysicsEngine3d.make Constants.Physics.GravityDefault
                 let rendererProcess =

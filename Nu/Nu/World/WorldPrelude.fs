@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
@@ -283,7 +283,7 @@ type TransitionState =
         | IdlingState time -> time
 
 /// Describes one of a screen's transition processes.
-type Transition =
+type [<SymbolicExpansion>] Transition =
     { TransitionType : TransitionType
       TransitionLifeTime : GameTime
       DissolveImageOpt : Image AssetTag option

@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 
@@ -62,6 +62,7 @@ module Assets =
         let [<Literal>] TerrainLayer1BlendName = "TerrainLayer1Blend"
         let [<Literal>] TerrainTintName = "TerrainTint"
         let [<Literal>] StaticModelName = "StaticModel"
+        let [<Literal>] BallModelName = "BallModel"
         let [<Literal>] HighlightModelName = "HighlightModel"
         let [<Literal>] LightbulbModelName = "LightbulbModel"
         let [<Literal>] LightProbeModelName = "LightProbeModel"

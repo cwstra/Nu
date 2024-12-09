@@ -1,9 +1,9 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
-open System.Collections.Generic
+open System.Collections.Frozen
 open System.IO
 open System.Numerics
 open Prime
@@ -16,15 +16,36 @@ module WorldModuleEntity =
     type private PropertySetter = Property -> Entity -> World -> struct (bool * World)
 
     /// Dynamic property getters / setters.
-    let private EntityGetters = Dictionary<string, PropertyGetter> StringComparer.Ordinal
-    let private EntitySetters = Dictionary<string, PropertySetter> StringComparer.Ordinal
-
-    // OPTIMIZATION: cache one entity change address to reduce allocation where possible.
-    let mutable private ChangeEventNamesFree = true
-    let private ChangeEventNamesCached = [|Constants.Lens.ChangeName; ""; Constants.Lens.EventName; ""; ""; ""; ""|]
+    let mutable private EntityGetters = Unchecked.defaultof<FrozenDictionary<string, PropertyGetter>>
+    let mutable private EntitySetters = Unchecked.defaultof<FrozenDictionary<string, PropertySetter>>
 
     /// Entity change (publishing) count key.
     let internal EntityChangeCountsKey = string Gen.id
+
+    /// Names of properties that will trigger body property changes.
+    let private BodyPropertyAffectingPropertyNames =
+        FrozenSet.ToFrozenSet
+            (["Scale"
+              "Offset"
+              "Size"
+              "BodyEnabled"
+              "BodyType"
+              "SleepingAllowed"
+              "Friction"
+              "Restitution"
+              "LinearDamping"
+              "AngularDamping"
+              "AngularFactor"
+              "Substance"
+              "GravityOverride"
+              "CharacterProperties"
+              "CollisionDetection"
+              "CollisionCategories"
+              "CollisionMask"
+              "BodyShape"
+              "Sensor"
+              "Observable"],
+            StringComparer.Ordinal)
 
     type World with
 
@@ -109,25 +130,17 @@ module WorldModuleEntity =
             if publishChangeEvents then
                 let changeData = { Name = propertyName; Previous = previousValue; Value = propertyValue }
                 let entityNames = Address.getNames entity.EntityAddress
-                let mutable changeEventNamesUtilized = false
-                let changeEventAddress =
-                    // OPTIMIZATION: this optimization should be hit >= 90% of the time. The 10% of cases where
-                    // it isn't should be acceptable.
-                    if  Array.length entityNames = 4 &&
-                        ChangeEventNamesFree then
-                        ChangeEventNamesFree <- false
-                        changeEventNamesUtilized <- true
-                        ChangeEventNamesCached.[1] <- propertyName
-                        ChangeEventNamesCached.[3] <- entityNames.[0]
-                        ChangeEventNamesCached.[4] <- entityNames.[1]
-                        ChangeEventNamesCached.[5] <- entityNames.[2]
-                        ChangeEventNamesCached.[6] <- entityNames.[3]
-                        rtoa<ChangeData> ChangeEventNamesCached
-                    else rtoa<ChangeData> (Array.append [|Constants.Lens.ChangeName; propertyName; Constants.Lens.EventName|] entityNames)
+                let world =
+                    // OPTIMIZATION: this works together with RigidBodyFacet to reduce the bookkeeping footprint of its
+                    // subscriptions. This does have some run-time performance cost associated with it, however.
+                    if BodyPropertyAffectingPropertyNames.Contains propertyName then
+                        let changeEventAddress = rtoa<ChangeData> (Array.append [|Constants.Lens.ChangeName; "BodyPropertiesAffecting"; Constants.Lens.EventName|] entityNames)
+                        let eventTrace = EventTrace.debug "World" "publishEntityChange" "BodyPropertiesAffecting" EventTrace.empty
+                        World.publishPlus changeData changeEventAddress eventTrace entity false false world
+                    else world
+                let changeEventAddress = rtoa<ChangeData> (Array.append [|Constants.Lens.ChangeName; propertyName; Constants.Lens.EventName|] entityNames)
                 let eventTrace = EventTrace.debug "World" "publishEntityChange" "" EventTrace.empty
-                let world = World.publishPlus changeData changeEventAddress eventTrace entity false false world
-                if changeEventNamesUtilized then ChangeEventNamesFree <- true
-                world
+                World.publishPlus changeData changeEventAddress eventTrace entity false false world
             else world
 
         static member inline internal getEntityStateOpt entity world =
@@ -283,9 +296,9 @@ module WorldModuleEntity =
                     entityState.Model <- { DesignerType = typeof<'a>; DesignerValue = model }
                     model
                 with _ ->
-                    Log.errorOnce "Could not convert existing entity model value to new type; using fallback model value instead."
+                    Log.errorOnce "Could not convert existing entity model value to new type; attempting to use fallback model value instead."
                     match entityState.Dispatcher.TryGetFallbackModel<'a> (modelSymbol, entity, world) with
-                    | None -> failwithnie ()
+                    | None -> typeof<'a>.GetDefaultValue () :?> 'a
                     | Some model ->
                         entityState.Model <- { DesignerType = typeof<'a>; DesignerValue = model }
                         model
@@ -394,7 +407,7 @@ module WorldModuleEntity =
                 let world = World.publishEntityChange (nameof entityState.PublishChangeEvents) previous value entityState.PublishChangeEvents entity world
                 struct (true, world)
             else struct (false, world)
-        
+
         static member internal setEntityPublishUpdates value entity world =
             let entityState = World.getEntityState entity world
             let previous = entityState.PublishUpdates
@@ -410,7 +423,7 @@ module WorldModuleEntity =
                 let world = World.publishEntityChange (nameof entityState.PublishUpdates) previous value entityState.PublishChangeEvents entity world
                 struct (true, world)
             else struct (false, world)
-        
+
         static member internal setEntityProtected value entity world =
             let entityState = World.getEntityState entity world
             let previous = entityState.Protected
@@ -423,7 +436,7 @@ module WorldModuleEntity =
                     entityState.Protected <- value
                     struct (true, World.setEntityState entityState entity world)
             else struct (false, world)
-        
+
         static member internal setEntityPersistent value entity world =
             let entityState = World.getEntityState entity world
             let previous = entityState.Persistent
@@ -439,7 +452,7 @@ module WorldModuleEntity =
                 let world = World.publishEntityChange (nameof entityState.Persistent) previous value entityState.PublishChangeEvents entity world
                 struct (true, world)
             else struct (false, world)
-        
+
         static member internal setEntityMounted value entity world =
             let entityState = World.getEntityState entity world
             let previous = entityState.Mounted
@@ -495,7 +508,7 @@ module WorldModuleEntity =
 
         static member internal getEntityAffineMatrixLocal entity world =
             let entityState = World.getEntityState entity world
-            Matrix4x4.CreateFromTrs (entityState.PositionLocal, entityState.RotationLocal, entityState.ScaleLocal)
+            Matrix4x4.CreateAffine (entityState.PositionLocal, entityState.RotationLocal, entityState.ScaleLocal)
 
         static member
 #if !DEBUG
@@ -523,7 +536,7 @@ module WorldModuleEntity =
             match simulants.TryGetValue (entity :> Simulant) with
             | (true, entitiesOpt) ->
                 match entitiesOpt with
-                | Some entities -> entities |> Seq.map cast<Entity> |> seq
+                | Some entities -> Seq.map cast<Entity> entities
                 | None -> Seq.empty
             | (false, _) -> Seq.empty
 
@@ -565,12 +578,12 @@ module WorldModuleEntity =
         /// Get all of the entities directly mounted on an entity.
         static member getEntityMounters entity world =
             match world.EntityMounts.TryGetValue entity with
-            | (true, mounters) -> Seq.filter (flip World.getEntityExists world) mounters |> SList.ofSeq |> seq
+            | (true, mounters) -> Seq.filter (flip World.getEntityExists world) mounters
             | (false, _) -> Seq.empty
 
         /// Traverse all of the entities directly mounted on an entity.
         static member traverseEntityMounters effect (entity : Entity) (world : World) =
-            let mounters = World.getEntityMounters entity world
+            let mounters = world |> World.getEntityMounters entity |> SList.ofSeq // eager to avoid inconsistency
             Seq.fold (fun world mounter -> effect entity mounter world) world mounters
 
         static member internal addEntityToMounts mountOpt entity world =
@@ -614,17 +627,12 @@ module WorldModuleEntity =
             let mounterState = World.getEntityState mounter world
             if  not mounterState.Physical || // OPTIMIZATION: skip call to getEntityAllowedToMount when non-physical.
                 World.getEntityAllowedToMount mounter world then
-                let affineMatrixWorld = World.getEntityAffineMatrix mount world
-                let affineMatrixLocal = World.getEntityAffineMatrixLocal mounter world
-                let affineMatrix = affineMatrixLocal * affineMatrixWorld
-                let mutable (scale, rotation, position) = (v3One, quatIdentity, v3Zero)
-                if Matrix4x4.Decompose (affineMatrix, &scale, &rotation, &position) then
-                    let mutable transform = mounterState.Transform
-                    transform.Position <- position
-                    transform.Rotation <- rotation
-                    transform.Scale <- scale
-                    World.setEntityTransformByRef (&transform, mounterState, mounter, world) |> snd'
-                else world
+                let mountState = World.getEntityState mount world
+                let mutable transform = mounterState.Transform
+                transform.Position <- Vector3.Transform (mounterState.PositionLocal, mountState.AffineMatrix)
+                transform.Rotation <- mountState.Rotation * mounterState.RotationLocal
+                transform.Scale <- mounterState.ScaleLocal * mountState.Scale
+                World.setEntityTransformByRef (&transform, mounterState, mounter, world) |> snd'
             else world
 
         static member internal propagateEntityProperties3 mountOpt entity world =
@@ -659,6 +667,14 @@ module WorldModuleEntity =
                 let worldExtension = { world.WorldExtension with PropagationTargets = UMap.add source targets world.WorldExtension.PropagationTargets }
                 World.choose { world with WorldExtension = worldExtension }
             | (false, _) ->
+                let world =
+                    if World.getEntityExists source world then
+                        match World.getEntityPropagatedDescriptorOpt source world with
+                        | None ->
+                            let propagatedDescriptor = World.writeEntity false EntityDescriptor.empty source world
+                            World.setEntityPropagatedDescriptorOpt (Some propagatedDescriptor) source world |> snd'
+                        | Some _ -> world
+                    else world
                 let config = World.getCollectionConfig world
                 let targets = USet.singleton HashIdentity.Structural config entity
                 let worldExtension = { world.WorldExtension with PropagationTargets = UMap.add source targets world.WorldExtension.PropagationTargets }
@@ -693,6 +709,15 @@ module WorldModuleEntity =
             let entityState = World.getEntityState entity world
             let previous = entityState.MountOpt
             if value <> previous then
+
+                // validate mount value
+                match value with
+                | Some mount ->
+                    let mountAddress = Relation.resolve entity.EntityAddress mount
+                    let mountToEntity = Relation.relate entity.EntityAddress mountAddress
+                    if Array.notExists (function Parent | Name "???" | Name "??" | Name "?" -> true | _ -> false) mountToEntity.Links then
+                        failwith "Cannot mount an entity circularly."
+                | None -> ()
 
                 // update property
                 let struct (entityState, world) =
@@ -745,7 +770,7 @@ module WorldModuleEntity =
                 let staticOld = entityState.StaticSpatial
                 let lightProbeOld = entityState.LightProbe
                 let lightOld = entityState.Light
-                let presenceOld = entityState.Presence
+                let presenceOld = entityState.PresenceSpatial
                 let boundsOld = entityState.Bounds
                 let struct (entityState, world) =
                     if entityState.Imperative then
@@ -768,7 +793,7 @@ module WorldModuleEntity =
                 let staticOld = entityState.StaticSpatial
                 let lightProbeOld = entityState.LightProbe
                 let lightOld = entityState.Light
-                let presenceOld = entityState.Presence
+                let presenceOld = entityState.PresenceSpatial
                 let boundsOld = entityState.Bounds
                 let struct (entityState, world) =
                     if entityState.Imperative then
@@ -791,7 +816,7 @@ module WorldModuleEntity =
                 let staticOld = entityState.StaticSpatial
                 let lightProbeOld = entityState.LightProbe
                 let lightOld = entityState.Light
-                let presenceOld = entityState.Presence
+                let presenceOld = entityState.PresenceSpatial
                 let boundsOld = entityState.Bounds
                 let struct (entityState, world) =
                     if entityState.Imperative then
@@ -814,7 +839,7 @@ module WorldModuleEntity =
                 let staticOld = entityState.StaticSpatial
                 let lightProbeOld = entityState.LightProbe
                 let lightOld = entityState.Light
-                let presenceOld = entityState.Presence
+                let presenceOld = entityState.PresenceSpatial
                 let boundsOld = entityState.Bounds
                 let struct (entityState, world) =
                     if entityState.Imperative then
@@ -832,12 +857,12 @@ module WorldModuleEntity =
         static member internal setEntityPresence (value : Presence) entity world =
             let entityState = World.getEntityState entity world
             let previous = entityState.Presence
-            if presenceNeq value previous && (value.OmnipresentType || not entityState.Absolute) then // a transform that is Absolute must remain Omnipresent then
+            if presenceNeq value previous && (value.IsOmnipresent || not entityState.Absolute) then // a transform that is Absolute must remain Omnipresent then
                 let visibleOld = entityState.VisibleSpatial
                 let staticOld = entityState.StaticSpatial
                 let lightProbeOld = entityState.LightProbe
                 let lightOld = entityState.Light
-                let presenceOld = entityState.Presence
+                let presenceOld = entityState.PresenceSpatial
                 let boundsOld = entityState.Bounds
                 let struct (entityState, world) =
                     if entityState.Imperative then
@@ -858,7 +883,7 @@ module WorldModuleEntity =
                 let staticOld = entityState.StaticSpatial
                 let lightProbeOld = entityState.LightProbe
                 let lightOld = entityState.Light
-                let presenceOld = entityState.Presence
+                let presenceOld = entityState.PresenceSpatial
                 let boundsOld = entityState.Bounds
                 let world =
                     if entityState.Imperative then
@@ -878,7 +903,7 @@ module WorldModuleEntity =
                 let staticOld = entityState.StaticSpatial
                 let lightProbeOld = entityState.LightProbe
                 let lightOld = entityState.Light
-                let presenceOld = entityState.Presence
+                let presenceOld = entityState.PresenceSpatial
                 let boundsOld = entityState.Bounds
                 let struct (entityState, world) =
                     if entityState.Imperative then
@@ -1069,7 +1094,7 @@ module WorldModuleEntity =
                                     entityState.AnglesLocal <- anglesLocal
                                     struct (entityState, world)
                                 else
-                                    let entityState = { entityState with RotationLocal = value }
+                                    let entityState = { entityState with RotationLocal = value; AnglesLocal = anglesLocal }
                                     struct (entityState, World.setEntityState entityState entity world)
                             let publishChangeEvents = entityState.PublishChangeEvents
                             let world = World.publishEntityChange (nameof entityState.RotationLocal) previous value publishChangeEvents entity world
@@ -1417,7 +1442,7 @@ module WorldModuleEntity =
                 let staticOld = entityState.StaticSpatial
                 let lightProbeOld = entityState.LightProbe
                 let lightOld = entityState.Light
-                let presenceOld = entityState.Presence
+                let presenceOld = entityState.PresenceSpatial
                 let boundsOld = entityState.Bounds
                 let struct (entityState, world) =
                     if entityState.Imperative then
@@ -1736,24 +1761,6 @@ module WorldModuleEntity =
             | null -> false
             | _ -> EntityState.tryGetProperty (propertyName, entityStateOpt, &property)
 
-        static member internal tryGetEntityXtensionValue<'a> propertyName entity world =
-            let entityStateOpt = World.getEntityStateOpt entity world
-            match entityStateOpt :> obj with
-            | null -> failwithf "Could not find entity '%s'." (scstring entity)
-            | _ ->
-                let mutable property = Unchecked.defaultof<Property>
-                if World.tryGetEntityProperty (propertyName, entity, world, &property) then
-                    let valueObj =
-                        match property.PropertyValue with
-                        | :? DesignerProperty as dp -> dp.DesignerValue
-                        | :? ComputedProperty as cp -> cp.ComputedGet (entity :> obj) (world :> obj)
-                        | _ -> property.PropertyValue
-                    match valueObj with
-                    | :? 'a as value -> value
-                    | null -> null :> obj :?> 'a
-                    | value -> value |> valueToSymbol |> symbolToValue
-                else Unchecked.defaultof<'a>
-
         static member internal tryGetEntityProperty (propertyName, entity, world, property : _ outref) =
             let entityStateOpt = World.getEntityStateOpt entity world
             match entityStateOpt :> obj with
@@ -1776,16 +1783,44 @@ module WorldModuleEntity =
             match entityStateOpt :> obj with
             | null -> failwithf "Could not find entity '%s'." (scstring entity)
             | _ ->
-                let property = EntityState.getProperty propertyName entityStateOpt
-                let valueObj =
-                    match property.PropertyValue with
-                    | :? DesignerProperty as dp -> dp.DesignerValue
-                    | :? ComputedProperty as cp -> cp.ComputedGet (entity :> obj) (world :> obj)
-                    | _ -> property.PropertyValue
-                match valueObj with
-                | :? 'a as value -> value
-                | null -> null :> obj :?> 'a
-                | value -> value |> valueToSymbol |> symbolToValue
+                let mutable property = Unchecked.defaultof<_>
+                if EntityState.tryGetProperty (propertyName, entityStateOpt, &property) then
+                    let valueObj =
+                        match property.PropertyValue with
+                        | :? DesignerProperty as dp -> dp.DesignerValue
+                        | :? ComputedProperty as cp -> cp.ComputedGet entity world
+                        | _ -> property.PropertyValue
+                    match valueObj with
+                    | :? 'a as value -> value
+                    | null -> null :> obj :?> 'a
+                    | value -> value |> valueToSymbol |> symbolToValue
+                else
+                    let value =
+                        match entityStateOpt.OverlayNameOpt with
+                        | Some overlayName ->
+                            match World.tryGetOverlayerPropertyValue propertyName typeof<'a> overlayName entityStateOpt.FacetNames world with
+                            | Some value -> value :?> 'a
+                            | None ->
+                                let definitions = Reflection.getPropertyDefinitions (getType entityStateOpt.Dispatcher)
+                                match List.tryFind (fun (pd : PropertyDefinition) -> pd.PropertyName = propertyName) definitions with
+                                | Some definition ->
+                                    match definition.PropertyExpr with
+                                    | DefineExpr value -> value :?> 'a
+                                    | VariableExpr eval -> eval world :?> 'a
+                                    | ComputedExpr property -> property.ComputedGet entity world :?> 'a
+                                | None -> failwithumf ()
+                        | None ->
+                            let definitions = Reflection.getPropertyDefinitions (getType entityStateOpt.Dispatcher)
+                            match List.tryFind (fun (pd : PropertyDefinition) -> pd.PropertyName = propertyName) definitions with
+                            | Some definition ->
+                                match definition.PropertyExpr with
+                                | DefineExpr value -> value :?> 'a
+                                | VariableExpr eval -> eval world :?> 'a
+                                | ComputedExpr property -> property.ComputedGet entity world :?> 'a
+                            | None -> failwithumf ()
+                    let property = { PropertyType = typeof<'a>; PropertyValue = value }
+                    entityStateOpt.Xtension <- Xtension.attachProperty propertyName property entityStateOpt.Xtension
+                    value
 
         static member internal getEntityProperty propertyName entity world =
             let mutable property = Unchecked.defaultof<_>
@@ -1818,7 +1853,6 @@ module WorldModuleEntity =
                         let previous = propertyOld.PropertyValue
                         if property.PropertyValue =/= previous then
                             if entityState.Imperative then
-                                // OPTIMIZATION: special case for imperative.
                                 propertyOld.PropertyValue <- property.PropertyValue
                                 struct (true, true, previous, world)
                             else
@@ -1830,7 +1864,6 @@ module WorldModuleEntity =
                     let previous = propertyOld.PropertyValue
                     if CoreOperators.(=/=) property.PropertyValue previous then
                         if entityState.Imperative then
-                            // OPTIMIZATION: special case for imperative.
                             propertyOld.PropertyValue <- property.PropertyValue
                             struct (true, true, previous, world)
                         else
@@ -1902,7 +1935,6 @@ module WorldModuleEntity =
                             if value =/= previous then
                                 changed <- true
                                 if entityState.Imperative then
-                                    // OPTIMIZATION: special case for imperative.
                                     propertyOld.PropertyValue <- value
                                     world
                                 else
@@ -1915,7 +1947,6 @@ module WorldModuleEntity =
                         if value =/= previous then
                             changed <- true
                             if entityState.Imperative then
-                                // OPTIMIZATION: special case for imperative.
                                 propertyOld.PropertyValue <- value
                                 world
                             else
@@ -1984,13 +2015,13 @@ module WorldModuleEntity =
             let entityState = World.getEntityState entity world
             let mutable transform = &entityState.Transform
             let presence = transform.Presence
-            presence.OmnipresentType || World.boundsInView2dAbsolute transform.Bounds2d.Box2 world
+            presence.IsOmnipresent || World.boundsInView2dAbsolute transform.Bounds2d.Box2 world
 
         static member internal getEntityInView2dRelative entity world =
             let entityState = World.getEntityState entity world
             let mutable transform = &entityState.Transform
             let presence = transform.Presence
-            presence.OmnipresentType || World.boundsInView2dRelative transform.Bounds2d.Box2 world
+            presence.IsOmnipresent || World.boundsInView2dRelative transform.Bounds2d.Box2 world
 
         static member internal getEntityInPlay2dAbsolute entity world =
             World.getEntityInView2dAbsolute entity world
@@ -2002,7 +2033,7 @@ module WorldModuleEntity =
             let entityState = World.getEntityState entity world
             let mutable transform = &entityState.Transform
             let presence = transform.Presence
-            presence.OmnipresentType || World.boundsInPlay3d transform.Bounds3d world
+            presence.IsOmnipresent || World.boundsInPlay3d transform.Bounds3d world
 
         static member internal getEntityInView3d entity world =
             let entityState = World.getEntityState entity world
@@ -2010,7 +2041,7 @@ module WorldModuleEntity =
             let light = entityState.Dispatcher.Light
             let mutable transform = &entityState.Transform
             let presence = transform.Presence
-            presence.OmnipresentType || World.boundsInView3d lightProbe light presence transform.Bounds3d world
+            presence.IsOmnipresent || World.boundsInView3d lightProbe light presence transform.Bounds3d world
 
         static member internal getEntityAttributesInferred (entity : Entity) world =
             let dispatcher = World.getEntityDispatcher entity world
@@ -2125,12 +2156,12 @@ module WorldModuleEntity =
                         let quadtree = World.getQuadtree world
                         let entityState = World.getEntityState entity world
                         let element = Quadelement.make entityState.VisibleSpatial entityState.StaticSpatial entity
-                        Quadtree.addElement entityState.Presence entityState.Bounds.Box2 element quadtree
+                        Quadtree.addElement entityState.PresenceSpatial entityState.Bounds.Box2 element quadtree
                     else
                         let octree = World.getOctree world
                         let entityState = World.getEntityState entity world
-                        let element = Octelement.make entityState.VisibleSpatial entityState.StaticSpatial entityState.LightProbe entityState.Light entityState.Presence entityState.Bounds entity
-                        Octree.addElement entityState.Presence entityState.Bounds element octree
+                        let element = Octelement.make entityState.VisibleSpatial entityState.StaticSpatial entityState.LightProbe entityState.Light entityState.PresenceSpatial entityState.Bounds entity
+                        Octree.addElement entityState.PresenceSpatial entityState.Bounds element octree
 
                 // register entity
                 World.registerEntity entity world
@@ -2167,12 +2198,12 @@ module WorldModuleEntity =
                         let quadtree = World.getQuadtree world
                         let entityState = World.getEntityState entity world
                         let element = Quadelement.make entityState.VisibleSpatial entityState.StaticSpatial entity
-                        Quadtree.removeElement entityState.Presence entityState.Bounds.Box2 element quadtree
+                        Quadtree.removeElement entityState.PresenceSpatial entityState.Bounds.Box2 element quadtree
                     else
                         let octree = World.getOctree world
                         let entityState = World.getEntityState entity world
-                        let element = Octelement.make entityState.VisibleSpatial entityState.StaticSpatial entityState.LightProbe entityState.Light entityState.Presence entityState.Bounds entity
-                        Octree.removeElement entityState.Presence entityState.Bounds element octree
+                        let element = Octelement.make entityState.VisibleSpatial entityState.StaticSpatial entityState.LightProbe entityState.Light entityState.PresenceSpatial entityState.Bounds entity
+                        Octree.removeElement entityState.PresenceSpatial entityState.Bounds element octree
 
                 // remove cached entity event addresses
                 EventGraph.cleanEventAddressCache entity.EntityAddress
@@ -2260,6 +2291,9 @@ module WorldModuleEntity =
                     else entityState
                 | None -> entityState
 
+            // populate local angles value from local rotation
+            entityState.AnglesLocal <- entityState.RotationLocal.RollPitchYaw
+
             // make entity address
             let entityAddress = group.GroupAddress <-- rtoa<Entity> entityState.Surnames
 
@@ -2278,8 +2312,8 @@ module WorldModuleEntity =
             // update publish update flag
             let world = World.updateEntityPublishUpdateFlag entity world |> snd'
 
-            // attempt to ImNui run entity first time if in the middle of simulant update phase
-            let world = if WorldModule.UpdatingSimulants then WorldModule.tryRunEntity entity world else world
+            // process entity first time if in the middle of simulant update phase
+            let world = if WorldModule.UpdatingSimulants then WorldModule.tryProcessEntity entity world else world
 
             // propagate properties
             let world =
@@ -2339,7 +2373,7 @@ module WorldModuleEntity =
                         let destination = destination / child.Name
                         World.renameEntityImmediate child destination world)
                         world children
-                let world = if WorldModule.UpdatingSimulants then WorldModule.tryRunEntity destination world else world
+                let world = if WorldModule.UpdatingSimulants then WorldModule.tryProcessEntity destination world else world
                 let world =
                     Seq.fold (fun world target ->
                         if World.getEntityExists target world
@@ -2492,6 +2526,9 @@ module WorldModuleEntity =
             // read the entity state's values
             let entityState = Reflection.readPropertiesToTarget id entityDescriptor.EntityProperties entityState
 
+            // populate local angles value from local rotation
+            entityState.AnglesLocal <- entityState.RotationLocal.RollPitchYaw
+
             // configure the name and surnames
             let (name, surnames) =
                 match nameOpt with
@@ -2530,8 +2567,8 @@ module WorldModuleEntity =
             // read the entity's children
             let world = World.readEntities entityDescriptor.EntityDescriptors entity world |> snd
 
-            // attempt to ImNui run entity first time if in the middle of simulant update phase
-            let world = if WorldModule.UpdatingSimulants then WorldModule.tryRunEntity entity world else world
+            // process entity first time if in the middle of simulant update phase
+            let world = if WorldModule.UpdatingSimulants then WorldModule.tryProcessEntity entity world else world
 
             // insert a propagated descriptor if needed
             let world =
@@ -2633,7 +2670,7 @@ module WorldModuleEntity =
                 let staticNew = entityState.StaticSpatial
                 let lightProbeNew = entityState.LightProbe
                 let lightNew = entityState.Light
-                let presenceNew = entityState.Presence
+                let presenceNew = entityState.PresenceSpatial
                 let boundsNew = entityState.Bounds
 
                 // OPTIMIZATION: only update when relevant entity state has changed.
@@ -2672,118 +2709,124 @@ module WorldModuleEntity =
 
     /// Initialize property getters.
     let private initGetters () =
-        EntityGetters.["Dispatcher"] <- fun entity world -> { PropertyType = typeof<EntityDispatcher>; PropertyValue = World.getEntityDispatcher entity world }
-        EntityGetters.["Facets"] <- fun entity world -> { PropertyType = typeof<Facet array>; PropertyValue = World.getEntityFacets entity world }
-        EntityGetters.["Transform"] <- fun entity world -> { PropertyType = typeof<Transform>; PropertyValue = (World.getEntityState entity world).Transform }
-        EntityGetters.["PerimeterCenter"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterCenter entity world }
-        EntityGetters.["PerimeterBottom"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterBottom entity world }
-        EntityGetters.["PerimeterBottomLeft"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterBottomLeft entity world }
-        EntityGetters.["PerimeterMin"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterMin entity world }
-        EntityGetters.["PerimeterMax"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterMax entity world }
-        EntityGetters.["PerimeterCenterLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterCenterLocal entity world }
-        EntityGetters.["PerimeterBottomLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterBottomLocal entity world }
-        EntityGetters.["PerimeterBottomLeftLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterBottomLeftLocal entity world }
-        EntityGetters.["PerimeterMinLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterMinLocal entity world }
-        EntityGetters.["PerimeterMaxLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterMaxLocal entity world }
-        EntityGetters.["Position"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPosition entity world }
-        EntityGetters.["PositionLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPositionLocal entity world }
-        EntityGetters.["Rotation"] <- fun entity world -> { PropertyType = typeof<Quaternion>; PropertyValue = World.getEntityRotation entity world }
-        EntityGetters.["RotationLocal"] <- fun entity world -> { PropertyType = typeof<Quaternion>; PropertyValue = World.getEntityRotationLocal entity world }
-        EntityGetters.["Scale"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityScale entity world }
-        EntityGetters.["ScaleLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityScaleLocal entity world }
-        EntityGetters.["Offset"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityOffset entity world }
-        EntityGetters.["Angles"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityAngles entity world }
-        EntityGetters.["AnglesLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityAnglesLocal entity world }
-        EntityGetters.["Degrees"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityDegrees entity world }
-        EntityGetters.["DegreesLocal"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityDegreesLocal entity world }
-        EntityGetters.["Size"] <- fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntitySize entity world }
-        EntityGetters.["Elevation"] <- fun entity world -> { PropertyType = typeof<single>; PropertyValue = World.getEntityElevation entity world }
-        EntityGetters.["ElevationLocal"] <- fun entity world -> { PropertyType = typeof<single>; PropertyValue = World.getEntityElevationLocal entity world }
-        EntityGetters.["Overflow"] <- fun entity world -> { PropertyType = typeof<single>; PropertyValue = World.getEntityOverflow entity world }
-        EntityGetters.["PerimeterUnscaled"] <- fun entity world -> { PropertyType = typeof<Box3>; PropertyValue = World.getEntityPerimeterUnscaled entity world }
-        EntityGetters.["Perimeter"] <- fun entity world -> { PropertyType = typeof<Box3>; PropertyValue = World.getEntityPerimeter entity world }
-        EntityGetters.["Bounds"] <- fun entity world -> { PropertyType = typeof<Box3>; PropertyValue = World.getEntityBounds entity world }
-        EntityGetters.["Presence"] <- fun entity world -> { PropertyType = typeof<Presence>; PropertyValue = World.getEntityPresence entity world }
-        EntityGetters.["Absolute"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityAbsolute entity world }
-        EntityGetters.["Model"] <- fun entity world -> let designerProperty = World.getEntityModelProperty entity world in { PropertyType = designerProperty.DesignerType; PropertyValue = designerProperty.DesignerValue }
-        EntityGetters.["MountOpt"] <- fun entity world -> { PropertyType = typeof<Entity Relation option>; PropertyValue = World.getEntityMountOpt entity world }
-        EntityGetters.["PropagationSourceOpt"] <- fun entity world -> { PropertyType = typeof<Entity option>; PropertyValue = World.getEntityPropagationSourceOpt entity world }
-        EntityGetters.["Imperative"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityImperative entity world }
-        EntityGetters.["PublishChangeEvents"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPublishChangeEvents entity world }
-        EntityGetters.["Enabled"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityEnabled entity world }
-        EntityGetters.["EnabledLocal"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityEnabledLocal entity world }
-        EntityGetters.["Visible"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityVisible entity world }
-        EntityGetters.["VisibleLocal"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityVisibleLocal entity world }
-        EntityGetters.["Pickable"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPickable entity world }
-        EntityGetters.["AlwaysUpdate"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityAlwaysUpdate entity world }
-        EntityGetters.["AlwaysRender"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityAlwaysRender entity world }
-        EntityGetters.["PublishUpdates"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPublishUpdates entity world }
-        EntityGetters.["Protected"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityProtected entity world }
-        EntityGetters.["Persistent"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPersistent entity world }
-        EntityGetters.["Mounted"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityMounted entity world }
-        EntityGetters.["Is2d"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityIs2d entity world }
-        EntityGetters.["Is3d"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityIs3d entity world }
-        EntityGetters.["Static"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityStatic entity world }
-        EntityGetters.["LightProbe"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityLightProbe entity world }
-        EntityGetters.["Light"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityLight entity world }
-        EntityGetters.["Physical"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPhysical entity world }
-        EntityGetters.["Optimized"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityOptimized entity world }
-        EntityGetters.["Destroying"] <- fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityDestroying entity world }
-        EntityGetters.["OverlayNameOpt"] <- fun entity world -> { PropertyType = typeof<string option>; PropertyValue = World.getEntityOverlayNameOpt entity world }
-        EntityGetters.["FacetNames"] <- fun entity world -> { PropertyType = typeof<string Set>; PropertyValue = World.getEntityFacetNames entity world }
-        EntityGetters.["PropagatedDescriptorOpt"] <- fun entity world -> { PropertyType = typeof<EntityDescriptor option>; PropertyValue = World.getEntityPropagatedDescriptorOpt entity world }
-        EntityGetters.["Order"] <- fun entity world -> { PropertyType = typeof<int64>; PropertyValue = World.getEntityOrder entity world }
-        EntityGetters.["Id"] <- fun entity world -> { PropertyType = typeof<Guid>; PropertyValue = World.getEntityId entity world }
-        EntityGetters.["Surnames"] <- fun entity world -> { PropertyType = typeof<string array>; PropertyValue = World.getEntitySurnames entity world }
-        EntityGetters.["Name"] <- fun entity world -> { PropertyType = typeof<string>; PropertyValue = World.getEntityName entity world }
+        let entityGetters =
+            dictPlus StringComparer.Ordinal
+                [("Dispatcher", fun entity world -> { PropertyType = typeof<EntityDispatcher>; PropertyValue = World.getEntityDispatcher entity world })
+                 ("Facets", fun entity world -> { PropertyType = typeof<Facet array>; PropertyValue = World.getEntityFacets entity world })
+                 ("Transform", fun entity world -> { PropertyType = typeof<Transform>; PropertyValue = (World.getEntityState entity world).Transform })
+                 ("PerimeterCenter", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterCenter entity world })
+                 ("PerimeterBottom", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterBottom entity world })
+                 ("PerimeterBottomLeft", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterBottomLeft entity world })
+                 ("PerimeterMin", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterMin entity world })
+                 ("PerimeterMax", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterMax entity world })
+                 ("PerimeterCenterLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterCenterLocal entity world })
+                 ("PerimeterBottomLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterBottomLocal entity world })
+                 ("PerimeterBottomLeftLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterBottomLeftLocal entity world })
+                 ("PerimeterMinLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterMinLocal entity world })
+                 ("PerimeterMaxLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPerimeterMaxLocal entity world })
+                 ("Position", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPosition entity world })
+                 ("PositionLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityPositionLocal entity world })
+                 ("Rotation", fun entity world -> { PropertyType = typeof<Quaternion>; PropertyValue = World.getEntityRotation entity world })
+                 ("RotationLocal", fun entity world -> { PropertyType = typeof<Quaternion>; PropertyValue = World.getEntityRotationLocal entity world })
+                 ("Scale", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityScale entity world })
+                 ("ScaleLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityScaleLocal entity world })
+                 ("Offset", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityOffset entity world })
+                 ("Angles", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityAngles entity world })
+                 ("AnglesLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityAnglesLocal entity world })
+                 ("Degrees", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityDegrees entity world })
+                 ("DegreesLocal", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntityDegreesLocal entity world })
+                 ("Size", fun entity world -> { PropertyType = typeof<Vector3>; PropertyValue = World.getEntitySize entity world })
+                 ("Elevation", fun entity world -> { PropertyType = typeof<single>; PropertyValue = World.getEntityElevation entity world })
+                 ("ElevationLocal", fun entity world -> { PropertyType = typeof<single>; PropertyValue = World.getEntityElevationLocal entity world })
+                 ("Overflow", fun entity world -> { PropertyType = typeof<single>; PropertyValue = World.getEntityOverflow entity world })
+                 ("PerimeterUnscaled", fun entity world -> { PropertyType = typeof<Box3>; PropertyValue = World.getEntityPerimeterUnscaled entity world })
+                 ("Perimeter", fun entity world -> { PropertyType = typeof<Box3>; PropertyValue = World.getEntityPerimeter entity world })
+                 ("Bounds", fun entity world -> { PropertyType = typeof<Box3>; PropertyValue = World.getEntityBounds entity world })
+                 ("Presence", fun entity world -> { PropertyType = typeof<Presence>; PropertyValue = World.getEntityPresence entity world })
+                 ("Absolute", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityAbsolute entity world })
+                 ("Model", fun entity world -> let designerProperty = World.getEntityModelProperty entity world in { PropertyType = designerProperty.DesignerType; PropertyValue = designerProperty.DesignerValue })
+                 ("MountOpt", fun entity world -> { PropertyType = typeof<Entity Relation option>; PropertyValue = World.getEntityMountOpt entity world })
+                 ("PropagationSourceOpt", fun entity world -> { PropertyType = typeof<Entity option>; PropertyValue = World.getEntityPropagationSourceOpt entity world })
+                 ("Imperative", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityImperative entity world })
+                 ("PublishChangeEvents", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPublishChangeEvents entity world })
+                 ("Enabled", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityEnabled entity world })
+                 ("EnabledLocal", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityEnabledLocal entity world })
+                 ("Visible", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityVisible entity world })
+                 ("VisibleLocal", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityVisibleLocal entity world })
+                 ("Pickable", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPickable entity world })
+                 ("AlwaysUpdate", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityAlwaysUpdate entity world })
+                 ("AlwaysRender", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityAlwaysRender entity world })
+                 ("PublishUpdates", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPublishUpdates entity world })
+                 ("Protected", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityProtected entity world })
+                 ("Persistent", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPersistent entity world })
+                 ("Mounted", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityMounted entity world })
+                 ("Is2d", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityIs2d entity world })
+                 ("Is3d", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityIs3d entity world })
+                 ("Static", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityStatic entity world })
+                 ("LightProbe", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityLightProbe entity world })
+                 ("Light", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityLight entity world })
+                 ("Physical", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPhysical entity world })
+                 ("Optimized", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityOptimized entity world })
+                 ("Destroying", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityDestroying entity world })
+                 ("OverlayNameOpt", fun entity world -> { PropertyType = typeof<string option>; PropertyValue = World.getEntityOverlayNameOpt entity world })
+                 ("FacetNames", fun entity world -> { PropertyType = typeof<string Set>; PropertyValue = World.getEntityFacetNames entity world })
+                 ("PropagatedDescriptorOpt", fun entity world -> { PropertyType = typeof<EntityDescriptor option>; PropertyValue = World.getEntityPropagatedDescriptorOpt entity world })
+                 ("Order", fun entity world -> { PropertyType = typeof<int64>; PropertyValue = World.getEntityOrder entity world })
+                 ("Id", fun entity world -> { PropertyType = typeof<Guid>; PropertyValue = World.getEntityId entity world })
+                 ("Surnames", fun entity world -> { PropertyType = typeof<string array>; PropertyValue = World.getEntitySurnames entity world })
+                 ("Name", fun entity world -> { PropertyType = typeof<string>; PropertyValue = World.getEntityName entity world })]
+        EntityGetters <- entityGetters.ToFrozenDictionary ()
 
     /// Initialize property setters.
     let private initSetters () =
-        EntitySetters.["Transform"] <- fun property entity world -> let mutable transform = property.PropertyValue :?> Transform in World.setEntityTransformByRef (&transform, World.getEntityState entity world, entity, world)
-        EntitySetters.["PerimeterCenter"] <- fun property entity world -> World.setEntityPerimeterCenter (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterBottom"] <- fun property entity world -> World.setEntityPerimeterBottom (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterBottomLeft"] <- fun property entity world -> World.setEntityPerimeterBottomLeft (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterMin"] <- fun property entity world -> World.setEntityPerimeterMin (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterMax"] <- fun property entity world -> World.setEntityPerimeterMax (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterCenterLocal"] <- fun property entity world -> World.setEntityPerimeterCenterLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterBottomLocal"] <- fun property entity world -> World.setEntityPerimeterBottomLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterBottomLeftLocal"] <- fun property entity world -> World.setEntityPerimeterBottomLeftLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterMinLocal"] <- fun property entity world -> World.setEntityPerimeterMinLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PerimeterMaxLocal"] <- fun property entity world -> World.setEntityPerimeterMaxLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["Position"] <- fun property entity world -> World.setEntityPosition (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["PositionLocal"] <- fun property entity world -> World.setEntityPositionLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["Rotation"] <- fun property entity world -> World.setEntityRotation (property.PropertyValue :?> Quaternion) entity world
-        EntitySetters.["RotationLocal"] <- fun property entity world -> World.setEntityRotationLocal (property.PropertyValue :?> Quaternion) entity world
-        EntitySetters.["Scale"] <- fun property entity world -> World.setEntityScale (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["ScaleLocal"] <- fun property entity world -> World.setEntityScaleLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["Offset"] <- fun property entity world -> World.setEntityOffset (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["Angles"] <- fun property entity world -> World.setEntityAngles (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["AnglesLocal"] <- fun property entity world -> World.setEntityAnglesLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["Degrees"] <- fun property entity world -> World.setEntityDegrees (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["DegreesLocal"] <- fun property entity world -> World.setEntityDegreesLocal (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["Size"] <- fun property entity world -> World.setEntitySize (property.PropertyValue :?> Vector3) entity world
-        EntitySetters.["Elevation"] <- fun property entity world -> World.setEntityElevation (property.PropertyValue :?> single) entity world
-        EntitySetters.["ElevationLocal"] <- fun property entity world -> World.setEntityElevationLocal (property.PropertyValue :?> single) entity world
-        EntitySetters.["Overflow"] <- fun property entity world -> World.setEntityOverflow (property.PropertyValue :?> single) entity world
-        EntitySetters.["PerimeterUnscaled"] <- fun property entity world -> World.setEntityPerimeterUnscaled (property.PropertyValue :?> Box3) entity world
-        EntitySetters.["Perimeter"] <- fun property entity world -> World.setEntityPerimeter (property.PropertyValue :?> Box3) entity world
-        EntitySetters.["Presence"] <- fun property entity world -> World.setEntityPresence (property.PropertyValue :?> Presence) entity world
-        EntitySetters.["Absolute"] <- fun property entity world -> World.setEntityAbsolute (property.PropertyValue :?> bool) entity world
-        EntitySetters.["Model"] <- fun property entity world -> World.setEntityModelProperty false { DesignerType = property.PropertyType; DesignerValue = property.PropertyValue } entity world
-        EntitySetters.["MountOpt"] <- fun property entity world -> World.setEntityMountOpt (property.PropertyValue :?> Entity Relation option) entity world
-        EntitySetters.["PropagationSourceOpt"] <- fun property entity world -> World.setEntityPropagationSourceOpt (property.PropertyValue :?> Entity option) entity world
-        EntitySetters.["Imperative"] <- fun property entity world -> World.setEntityImperative (property.PropertyValue :?> bool) entity world
-        EntitySetters.["Enabled"] <- fun property entity world -> World.setEntityEnabled (property.PropertyValue :?> bool) entity world
-        EntitySetters.["EnabledLocal"] <- fun property entity world -> World.setEntityEnabledLocal (property.PropertyValue :?> bool) entity world
-        EntitySetters.["Visible"] <- fun property entity world -> World.setEntityVisible (property.PropertyValue :?> bool) entity world
-        EntitySetters.["VisibleLocal"] <- fun property entity world -> World.setEntityVisibleLocal (property.PropertyValue :?> bool) entity world
-        EntitySetters.["Pickable"] <- fun property entity world -> World.setEntityPickable (property.PropertyValue :?> bool) entity world
-        EntitySetters.["Static"] <- fun property entity world -> World.setEntityStatic (property.PropertyValue :?> bool) entity world
-        EntitySetters.["AlwaysUpdate"] <- fun property entity world -> World.setEntityAlwaysUpdate (property.PropertyValue :?> bool) entity world
-        EntitySetters.["AlwaysRender"] <- fun property entity world -> World.setEntityAlwaysRender (property.PropertyValue :?> bool) entity world
-        EntitySetters.["Persistent"] <- fun property entity world -> World.setEntityPersistent (property.PropertyValue :?> bool) entity world
-        EntitySetters.["PropagatedDescriptorOpt"] <- fun property entity world -> World.setEntityPropagatedDescriptorOpt (property.PropertyValue :?> EntityDescriptor option) entity world
-        EntitySetters.["Order"] <- fun property entity world -> World.setEntityOrder (property.PropertyValue :?> int64) entity world
+        let entitySetters =
+            dictPlus StringComparer.Ordinal
+                [("Transform", fun property entity world -> let mutable transform = property.PropertyValue :?> Transform in World.setEntityTransformByRef (&transform, World.getEntityState entity world, entity, world))
+                 ("PerimeterCenter", fun property entity world -> World.setEntityPerimeterCenter (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterBottom", fun property entity world -> World.setEntityPerimeterBottom (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterBottomLeft", fun property entity world -> World.setEntityPerimeterBottomLeft (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterMin", fun property entity world -> World.setEntityPerimeterMin (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterMax", fun property entity world -> World.setEntityPerimeterMax (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterCenterLocal", fun property entity world -> World.setEntityPerimeterCenterLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterBottomLocal", fun property entity world -> World.setEntityPerimeterBottomLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterBottomLeftLocal", fun property entity world -> World.setEntityPerimeterBottomLeftLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterMinLocal", fun property entity world -> World.setEntityPerimeterMinLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("PerimeterMaxLocal", fun property entity world -> World.setEntityPerimeterMaxLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("Position", fun property entity world -> World.setEntityPosition (property.PropertyValue :?> Vector3) entity world)
+                 ("PositionLocal", fun property entity world -> World.setEntityPositionLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("Rotation", fun property entity world -> World.setEntityRotation (property.PropertyValue :?> Quaternion) entity world)
+                 ("RotationLocal", fun property entity world -> World.setEntityRotationLocal (property.PropertyValue :?> Quaternion) entity world)
+                 ("Scale", fun property entity world -> World.setEntityScale (property.PropertyValue :?> Vector3) entity world)
+                 ("ScaleLocal", fun property entity world -> World.setEntityScaleLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("Offset", fun property entity world -> World.setEntityOffset (property.PropertyValue :?> Vector3) entity world)
+                 ("Angles", fun property entity world -> World.setEntityAngles (property.PropertyValue :?> Vector3) entity world)
+                 ("AnglesLocal", fun property entity world -> World.setEntityAnglesLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("Degrees", fun property entity world -> World.setEntityDegrees (property.PropertyValue :?> Vector3) entity world)
+                 ("DegreesLocal", fun property entity world -> World.setEntityDegreesLocal (property.PropertyValue :?> Vector3) entity world)
+                 ("Size", fun property entity world -> World.setEntitySize (property.PropertyValue :?> Vector3) entity world)
+                 ("Elevation", fun property entity world -> World.setEntityElevation (property.PropertyValue :?> single) entity world)
+                 ("ElevationLocal", fun property entity world -> World.setEntityElevationLocal (property.PropertyValue :?> single) entity world)
+                 ("Overflow", fun property entity world -> World.setEntityOverflow (property.PropertyValue :?> single) entity world)
+                 ("PerimeterUnscaled", fun property entity world -> World.setEntityPerimeterUnscaled (property.PropertyValue :?> Box3) entity world)
+                 ("Perimeter", fun property entity world -> World.setEntityPerimeter (property.PropertyValue :?> Box3) entity world)
+                 ("Presence", fun property entity world -> World.setEntityPresence (property.PropertyValue :?> Presence) entity world)
+                 ("Absolute", fun property entity world -> World.setEntityAbsolute (property.PropertyValue :?> bool) entity world)
+                 ("Model", fun property entity world -> World.setEntityModelProperty false { DesignerType = property.PropertyType; DesignerValue = property.PropertyValue } entity world)
+                 ("MountOpt", fun property entity world -> World.setEntityMountOpt (property.PropertyValue :?> Entity Relation option) entity world)
+                 ("PropagationSourceOpt", fun property entity world -> World.setEntityPropagationSourceOpt (property.PropertyValue :?> Entity option) entity world)
+                 ("Imperative", fun property entity world -> World.setEntityImperative (property.PropertyValue :?> bool) entity world)
+                 ("Enabled", fun property entity world -> World.setEntityEnabled (property.PropertyValue :?> bool) entity world)
+                 ("EnabledLocal", fun property entity world -> World.setEntityEnabledLocal (property.PropertyValue :?> bool) entity world)
+                 ("Visible", fun property entity world -> World.setEntityVisible (property.PropertyValue :?> bool) entity world)
+                 ("VisibleLocal", fun property entity world -> World.setEntityVisibleLocal (property.PropertyValue :?> bool) entity world)
+                 ("Pickable", fun property entity world -> World.setEntityPickable (property.PropertyValue :?> bool) entity world)
+                 ("Static", fun property entity world -> World.setEntityStatic (property.PropertyValue :?> bool) entity world)
+                 ("AlwaysUpdate", fun property entity world -> World.setEntityAlwaysUpdate (property.PropertyValue :?> bool) entity world)
+                 ("AlwaysRender", fun property entity world -> World.setEntityAlwaysRender (property.PropertyValue :?> bool) entity world)
+                 ("Persistent", fun property entity world -> World.setEntityPersistent (property.PropertyValue :?> bool) entity world)
+                 ("PropagatedDescriptorOpt", fun property entity world -> World.setEntityPropagatedDescriptorOpt (property.PropertyValue :?> EntityDescriptor option) entity world)
+                 ("Order", fun property entity world -> World.setEntityOrder (property.PropertyValue :?> int64) entity world)]
+        EntitySetters <- entitySetters.ToFrozenDictionary ()
 
     /// Initialize getters and setters
     let internal init () =

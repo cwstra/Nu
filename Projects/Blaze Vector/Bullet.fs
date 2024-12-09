@@ -3,6 +3,7 @@ open System
 open System.Numerics
 open Prime
 open Nu
+open BlazeVector
 
 type BulletCommand =
     | Update
@@ -22,12 +23,12 @@ type BulletDispatcher () =
         [Entity.Size == v3 16.0f 16.0f 0.0f
          Entity.Presence == Omnipresent
          Entity.Static == false
-         Entity.Substance == Density 0.1f
-         Entity.Restitution == 0.5f
-         Entity.LinearDamping == 0.0f
-         Entity.GravityOverride == Some v3Zero
          Entity.BodyType == Dynamic
          Entity.BodyShape == SphereShape { Radius = 0.5f; TransformOpt = None; PropertiesOpt = None }
+         Entity.Restitution == 0.5f
+         Entity.LinearDamping == 0.0f
+         Entity.Substance == Density 0.1f
+         Entity.GravityOverride == Some v3Zero
          Entity.Observable == true
          Entity.StaticImage == Assets.Gameplay.PlayerBulletImage
          Entity.UpdateEvent => Update

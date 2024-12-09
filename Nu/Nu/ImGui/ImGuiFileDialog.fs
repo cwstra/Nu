@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace ImGuiNET
 open System
@@ -281,7 +281,7 @@ module ImGui =
                 fileNameBuffer <- fileNameStr.Substring(0, fileNameSize)
 
                 ImGui.PushItemWidth contentRegionWidth
-                if ImGui.InputText ("File Name", &fileNameBuffer, uint fileNameBufferSize) then
+                if ImGui.InputText ("File Name", &fileNameBuffer, uint fileNameBufferSize, ImGuiInputTextFlags.AutoSelectAll) then
                     dialogState.FileName <- fileNameBuffer
                     dialogState.CurrentIndex <- 0UL
 

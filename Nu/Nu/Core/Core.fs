@@ -1,10 +1,9 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
 open System.Diagnostics
-open System.Text.RegularExpressions
 open Prime
 
 [<RequireQualifiedAccess>]

@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
@@ -74,8 +74,8 @@ type StaticSpriteFacet () =
 
     override this.GetAttributesInferred (entity, world) =
         match Metadata.tryGetTextureSizeF (entity.GetStaticImage world) with
-        | Some size -> AttributesInferred.important size.V3 v3Zero
-        | None -> AttributesInferred.important Constants.Engine.Entity2dSizeDefault v3Zero
+        | ValueSome size -> AttributesInferred.important size.V3 v3Zero
+        | ValueNone -> AttributesInferred.important Constants.Engine.Entity2dSizeDefault v3Zero
 
 [<AutoOpen>]
 module AnimatedSpriteFacetExtensions =
@@ -291,7 +291,7 @@ type BasicStaticSpriteEmitterFacet () =
         (Cascade, world)
 
     static let handleEmitterStyleChange evt world =
-        let entity = evt.Subscriber
+        let entity = evt.Subscriber : Entity
         let emitter = makeEmitter entity world
         let world = mapEmitter (constant emitter) entity world
         (Cascade, world)
@@ -416,9 +416,9 @@ module TextFacetExtensions =
         member this.GetTextColor world : Color = this.Get (nameof this.TextColor) world
         member this.SetTextColor (value : Color) world = this.Set (nameof this.TextColor) value world
         member this.TextColor = lens (nameof this.TextColor) this this.GetTextColor this.SetTextColor
-        member this.GetTextDisabledColor world : Color = this.Get (nameof this.TextDisabledColor) world
-        member this.SetTextDisabledColor (value : Color) world = this.Set (nameof this.TextDisabledColor) value world
-        member this.TextDisabledColor = lens (nameof this.TextDisabledColor) this this.GetTextDisabledColor this.SetTextDisabledColor
+        member this.GetTextColorDisabled world : Color = this.Get (nameof this.TextColorDisabled) world
+        member this.SetTextColorDisabled (value : Color) world = this.Set (nameof this.TextColorDisabled) value world
+        member this.TextColorDisabled = lens (nameof this.TextColorDisabled) this this.GetTextColorDisabled this.SetTextColorDisabled
         member this.GetTextOffset world : Vector2 = this.Get (nameof this.TextOffset) world
         member this.SetTextOffset (value : Vector2) world = this.Set (nameof this.TextOffset) value world
         member this.TextOffset = lens (nameof this.TextOffset) this this.GetTextOffset this.SetTextOffset
@@ -438,12 +438,11 @@ type TextFacet () =
          define Entity.Justification (Justified (JustifyCenter, JustifyMiddle))
          define Entity.TextMargin v2Zero
          define Entity.TextColor Color.White
-         define Entity.TextDisabledColor Constants.Gui.DisabledColorDefault
+         define Entity.TextColorDisabled Constants.Gui.ColorDisabledDefault
          define Entity.TextOffset v2Zero
          define Entity.TextShift 0.5f]
 
     override this.Render (_, entity, world) =
-        let text = entity.GetText world
         let mutable transform = entity.GetTransform world
         let absolute = transform.Absolute
         let perimeter = transform.Perimeter
@@ -453,11 +452,12 @@ type TextFacet () =
         let clipOpt = ValueSome transform.Bounds2d.Box2
         let justification = entity.GetJustification world
         let margin = (entity.GetTextMargin world).V3
-        let color = if transform.Enabled then entity.GetTextColor world else entity.GetTextDisabledColor world
+        let color = if transform.Enabled then entity.GetTextColor world else entity.GetTextColorDisabled world
         let font = entity.GetFont world
         let fontSizing = entity.GetFontSizing world
         let fontStyling = entity.GetFontStyling world
-        World.renderGuiText absolute perimeter offset elevation shift clipOpt justification margin color font fontSizing fontStyling text world
+        let text = entity.GetText world
+        World.renderGuiText absolute perimeter offset elevation shift clipOpt justification None margin color font fontSizing fontStyling text world
 
     override this.GetAttributesInferred (_, _) =
         AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
@@ -465,9 +465,9 @@ type TextFacet () =
 [<AutoOpen>]
 module BackdroppableFacetExtensions =
     type Entity with
-        member this.GetDisabledColor world : Color = this.Get (nameof this.DisabledColor) world
-        member this.SetDisabledColor (value : Color) world = this.Set (nameof this.DisabledColor) value world
-        member this.DisabledColor = lens (nameof this.DisabledColor) this this.GetDisabledColor this.SetDisabledColor
+        member this.GetColorDisabled world : Color = this.Get (nameof this.ColorDisabled) world
+        member this.SetColorDisabled (value : Color) world = this.Set (nameof this.ColorDisabled) value world
+        member this.ColorDisabled = lens (nameof this.ColorDisabled) this this.GetColorDisabled this.SetColorDisabled
         member this.GetSliceMargin world : Vector2 = this.Get (nameof this.SliceMargin) world
         member this.SetSliceMargin (value : Vector2) world = this.Set (nameof this.SliceMargin) value world
         member this.SliceMargin = lens (nameof this.SliceMargin) this this.GetSliceMargin this.SetSliceMargin
@@ -482,7 +482,7 @@ type BackdroppableFacet () =
     static member Properties =
         [define Entity.SliceMargin Constants.Gui.SliceMarginDefault
          define Entity.Color Color.One
-         define Entity.DisabledColor Constants.Gui.DisabledColorDefault
+         define Entity.ColorDisabled Constants.Gui.ColorDisabledDefault
          define Entity.BackdropImageOpt None]
 
     override this.Render (_, entity, world) =
@@ -490,7 +490,7 @@ type BackdroppableFacet () =
         | Some spriteImage ->
             let mutable transform = entity.GetTransform world
             let sliceMargin = entity.GetSliceMargin world
-            let color = if transform.Enabled then entity.GetColor world else entity.GetDisabledColor world
+            let color = if transform.Enabled then entity.GetColor world else entity.GetColorDisabled world
             World.renderGuiSpriteSliced transform.Absolute transform.Perimeter sliceMargin spriteImage transform.Offset transform.Elevation color world
         | None -> ()
 
@@ -498,8 +498,8 @@ type BackdroppableFacet () =
         match entity.GetBackdropImageOpt world with
         | Some backdropImage ->
             match Metadata.tryGetTextureSizeF backdropImage with
-            | Some size -> AttributesInferred.important size.V3 v3Zero
-            | None -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
+            | ValueSome size -> AttributesInferred.important size.V3 v3Zero
+            | ValueNone -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
         | None -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
 
 [<AutoOpen>]
@@ -573,7 +573,7 @@ type ButtonFacet () =
 
     static member Properties =
         [define Entity.SliceMargin Constants.Gui.SliceMarginDefault
-         define Entity.DisabledColor Constants.Gui.DisabledColorDefault
+         define Entity.ColorDisabled Constants.Gui.ColorDisabledDefault
          define Entity.Down false
          define Entity.DownOffset v2Zero
          define Entity.UpImage Assets.Default.ButtonUp
@@ -590,13 +590,13 @@ type ButtonFacet () =
         let mutable transform = entity.GetTransform world
         let sliceMargin = entity.GetSliceMargin world
         let spriteImage = if entity.GetDown world then entity.GetDownImage world else entity.GetUpImage world
-        let color = if transform.Enabled then Color.One else entity.GetDisabledColor world
+        let color = if transform.Enabled then Color.One else entity.GetColorDisabled world
         World.renderGuiSpriteSliced transform.Absolute transform.Perimeter sliceMargin spriteImage transform.Offset transform.Elevation color world
 
     override this.GetAttributesInferred (entity, world) =
         match Metadata.tryGetTextureSizeF (entity.GetUpImage world) with
-        | Some size -> AttributesInferred.important size.V3 v3Zero
-        | None -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
+        | ValueSome size -> AttributesInferred.important size.V3 v3Zero
+        | ValueNone -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
 
 [<AutoOpen>]
 module ToggleButtonFacetExtensions =
@@ -607,12 +607,12 @@ module ToggleButtonFacetExtensions =
         member this.GetToggledOffset world : Vector2 = this.Get (nameof this.ToggledOffset) world
         member this.SetToggledOffset (value : Vector2) world = this.Set (nameof this.ToggledOffset) value world
         member this.ToggledOffset = lens (nameof this.ToggledOffset) this this.GetToggledOffset this.SetToggledOffset
-        member this.GetPressed world : bool = this.Get (nameof this.Pressed) world
-        member this.SetPressed (value : bool) world = this.Set (nameof this.Pressed) value world
-        member this.Pressed = lens (nameof this.Pressed) this this.GetPressed this.SetPressed
-        member this.GetPressedOffset world : Vector2 = this.Get (nameof this.PressedOffset) world
-        member this.SetPressedOffset (value : Vector2) world = this.Set (nameof this.PressedOffset) value world
-        member this.PressedOffset = lens (nameof this.PressedOffset) this this.GetPressedOffset this.SetPressedOffset
+        member this.GetPushed world : bool = this.Get (nameof this.Pushed) world
+        member this.SetPushed (value : bool) world = this.Set (nameof this.Pushed) value world
+        member this.Pushed = lens (nameof this.Pushed) this this.GetPushed this.SetPushed
+        member this.GetPushedOffset world : Vector2 = this.Get (nameof this.PushedOffset) world
+        member this.SetPushedOffset (value : Vector2) world = this.Set (nameof this.PushedOffset) value world
+        member this.PushedOffset = lens (nameof this.PushedOffset) this this.GetPushedOffset this.SetPushedOffset
         member this.GetUntoggledImage world : Image AssetTag = this.Get (nameof this.UntoggledImage) world
         member this.SetUntoggledImage (value : Image AssetTag) world = this.Set (nameof this.UntoggledImage) value world
         member this.UntoggledImage = lens (nameof this.UntoggledImage) this this.GetUntoggledImage this.SetUntoggledImage
@@ -641,7 +641,7 @@ type ToggleButtonFacet () =
             let mousePositionWorld = World.getMousePostion2dWorld transform.Absolute world
             if perimeter.Intersects mousePositionWorld then
                 if transform.Enabled then
-                    let world = entity.SetPressed true world
+                    let world = entity.SetPushed true world
                     (Resolve, world)
                 else (Resolve, world)
             else (Cascade, world)
@@ -649,14 +649,14 @@ type ToggleButtonFacet () =
 
     static let handleMouseLeftUp evt world =
         let entity = evt.Subscriber : Entity
-        let wasPressed = entity.GetPressed world
-        let world = if wasPressed then entity.SetPressed false world else world
+        let wasPushed = entity.GetPushed world
+        let world = if wasPushed then entity.SetPushed false world else world
         if entity.GetVisible world then
             let mutable transform = entity.GetTransform world
             let perimeter = transform.Perimeter.Box2 // gui currently ignores rotation
             let mousePositionWorld = World.getMousePostion2dWorld transform.Absolute world
             if perimeter.Intersects mousePositionWorld then
-                if transform.Enabled && wasPressed then
+                if transform.Enabled && wasPushed then
                     let world = entity.SetToggled (not (entity.GetToggled world)) world
                     let toggled = entity.GetToggled world
                     let eventAddress = if toggled then entity.ToggledEvent else entity.UntoggledEvent
@@ -674,11 +674,11 @@ type ToggleButtonFacet () =
 
     static member Properties =
         [define Entity.SliceMargin Constants.Gui.SliceMarginDefault
-         define Entity.DisabledColor Constants.Gui.DisabledColorDefault
+         define Entity.ColorDisabled Constants.Gui.ColorDisabledDefault
          define Entity.Toggled false
          define Entity.ToggledOffset v2Zero
-         define Entity.Pressed false
-         define Entity.PressedOffset v2Zero
+         define Entity.Pushed false
+         define Entity.PushedOffset v2Zero
          define Entity.UntoggledImage Assets.Default.ButtonUp
          define Entity.ToggledImage Assets.Default.ButtonDown
          define Entity.ToggleSoundOpt (Some Assets.Default.Sound)
@@ -691,7 +691,7 @@ type ToggleButtonFacet () =
 
     override this.Update (entity, world) =
         let textOffset =
-            if entity.GetPressed world then entity.GetPressedOffset world
+            if entity.GetPushed world then entity.GetPushedOffset world
             elif entity.GetToggled world then entity.GetToggledOffset world
             else v2Zero
         let struct (_, _, world) = entity.TrySet (nameof Entity.TextOffset) textOffset world
@@ -701,16 +701,16 @@ type ToggleButtonFacet () =
         let mutable transform = entity.GetTransform world
         let sliceMargin = entity.GetSliceMargin world
         let spriteImage =
-            if entity.GetToggled world || entity.GetPressed world
+            if entity.GetToggled world || entity.GetPushed world
             then entity.GetToggledImage world
             else entity.GetUntoggledImage world
-        let color = if transform.Enabled then Color.One else entity.GetDisabledColor world
+        let color = if transform.Enabled then Color.One else entity.GetColorDisabled world
         World.renderGuiSpriteSliced transform.Absolute transform.Perimeter sliceMargin spriteImage transform.Offset transform.Elevation color world
 
     override this.GetAttributesInferred (entity, world) =
         match Metadata.tryGetTextureSizeF (entity.GetUntoggledImage world) with
-        | Some size -> AttributesInferred.important size.V3 v3Zero
-        | None -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
+        | ValueSome size -> AttributesInferred.important size.V3 v3Zero
+        | ValueNone -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
 
 [<AutoOpen>]
 module RadioButtonFacetExtensions =
@@ -749,7 +749,7 @@ type RadioButtonFacet () =
             let mousePositionWorld = World.getMousePostion2dWorld transform.Absolute world
             if perimeter.Intersects mousePositionWorld then
                 if transform.Enabled then
-                    let world = entity.SetPressed true world
+                    let world = entity.SetPushed true world
                     (Resolve, world)
                 else (Resolve, world)
             else (Cascade, world)
@@ -757,15 +757,15 @@ type RadioButtonFacet () =
 
     static let handleMouseLeftUp evt world =
         let entity = evt.Subscriber : Entity
-        let wasPressed = entity.GetPressed world
-        let world = if wasPressed then entity.SetPressed false world else world
+        let wasPushed = entity.GetPushed world
+        let world = if wasPushed then entity.SetPushed false world else world
         let wasDialed = entity.GetDialed world
         if entity.GetVisible world then
             let mutable transform = entity.GetTransform world
             let perimeter = transform.Perimeter.Box2 // gui currently ignores rotation
             let mousePositionWorld = World.getMousePostion2dWorld transform.Absolute world
             if perimeter.Intersects mousePositionWorld then
-                if transform.Enabled && wasPressed && not wasDialed then
+                if transform.Enabled && wasPushed && not wasDialed then
                     let world = entity.SetDialed true world
                     let dialed = entity.GetDialed world
                     let eventAddress = if dialed then entity.DialedEvent else entity.UndialedEvent
@@ -783,11 +783,11 @@ type RadioButtonFacet () =
 
     static member Properties =
         [define Entity.SliceMargin Constants.Gui.SliceMarginDefault
-         define Entity.DisabledColor Constants.Gui.DisabledColorDefault
+         define Entity.ColorDisabled Constants.Gui.ColorDisabledDefault
          define Entity.Dialed false
          define Entity.DialedOffset v2Zero
-         define Entity.Pressed false
-         define Entity.PressedOffset v2Zero
+         define Entity.Pushed false
+         define Entity.PushedOffset v2Zero
          define Entity.UndialedImage Assets.Default.ButtonUp
          define Entity.DialedImage Assets.Default.ButtonDown
          define Entity.DialSoundOpt (Some Assets.Default.Sound)
@@ -800,7 +800,7 @@ type RadioButtonFacet () =
 
     override this.Update (entity, world) =
         let textOffset =
-            if entity.GetPressed world then entity.GetPressedOffset world
+            if entity.GetPushed world then entity.GetPushedOffset world
             elif entity.GetDialed world then entity.GetDialedOffset world
             else v2Zero
         let struct (_, _, world) = entity.TrySet (nameof Entity.TextOffset) textOffset world
@@ -810,16 +810,16 @@ type RadioButtonFacet () =
         let mutable transform = entity.GetTransform world
         let sliceMargin = entity.GetSliceMargin world
         let spriteImage =
-            if entity.GetDialed world || entity.GetPressed world
+            if entity.GetDialed world || entity.GetPushed world
             then entity.GetDialedImage world
             else entity.GetUndialedImage world
-        let color = if transform.Enabled then Color.One else entity.GetDisabledColor world
+        let color = if transform.Enabled then Color.One else entity.GetColorDisabled world
         World.renderGuiSpriteSliced transform.Absolute transform.Perimeter sliceMargin spriteImage transform.Offset transform.Elevation color world
 
     override this.GetAttributesInferred (entity, world) =
         match Metadata.tryGetTextureSizeF (entity.GetUndialedImage world) with
-        | Some size -> AttributesInferred.important size.V3 v3Zero
-        | None -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
+        | ValueSome size -> AttributesInferred.important size.V3 v3Zero
+        | ValueNone -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
 
 [<AutoOpen>]
 module FillBarFacetExtensions =
@@ -849,7 +849,7 @@ type FillBarFacet () =
 
     static member Properties =
         [define Entity.SliceMargin Constants.Gui.SliceMarginDefault
-         define Entity.DisabledColor Constants.Gui.DisabledColorDefault
+         define Entity.ColorDisabled Constants.Gui.ColorDisabledDefault
          define Entity.Fill 0.0f
          define Entity.FillInset 0.0f
          define Entity.FillColor (Color (1.0f, 0.0f, 0.0f, 1.0f))
@@ -863,7 +863,7 @@ type FillBarFacet () =
         let mutable transform = entity.GetTransform world
         let sliceMargin = entity.GetSliceMargin world
         let elevation = transform.Elevation + 0.5f
-        let color = if transform.Enabled then Color.White else entity.GetDisabledColor world
+        let color = if transform.Enabled then Color.White else entity.GetColorDisabled world
         let borderImageColor = entity.GetBorderColor world * color
         let borderImage = entity.GetBorderImage world
         World.renderGuiSpriteSliced transform.Absolute transform.Perimeter sliceMargin borderImage transform.Offset elevation borderImageColor world
@@ -882,8 +882,8 @@ type FillBarFacet () =
 
     override this.GetAttributesInferred (entity, world) =
         match Metadata.tryGetTextureSizeF (entity.GetBorderImage world) with
-        | Some size -> AttributesInferred.important size.V3 v3Zero
-        | None -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
+        | ValueSome size -> AttributesInferred.important size.V3 v3Zero
+        | ValueNone -> AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
 
 [<AutoOpen>]
 module FeelerFacetExtensions =
@@ -895,7 +895,8 @@ module FeelerFacetExtensions =
         member this.TouchingEvent = Events.TouchingEvent --> this
         member this.UntouchEvent = Events.UntouchEvent --> this
 
-/// Augments an entity with feeler behavior.
+/// Augments an entity with feeler behavior, acting as little invisible pane that produces touch events in response
+/// to mouse input.
 type FeelerFacet () =
     inherit Facet (false, false, false)
 
@@ -964,6 +965,162 @@ type FeelerFacet () =
                 world
             else world
         else world
+
+    override this.GetAttributesInferred (_, _) =
+        AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
+
+[<AutoOpen>]
+module TextBoxFacetExtensions =
+    type Entity with
+        member this.GetTextCapacity world : int = this.Get (nameof this.TextCapacity) world
+        member this.SetTextCapacity (value : int) world = this.Set (nameof this.TextCapacity) value world
+        member this.TextCapacity = lens (nameof this.TextCapacity) this this.GetTextCapacity this.SetTextCapacity
+        member this.GetFocused world : bool = this.Get (nameof this.Focused) world
+        member this.SetFocused (value : bool) world = this.Set (nameof this.Focused) value world
+        member this.Focused = lens (nameof this.Focused) this this.GetFocused this.SetFocused
+        member this.GetCursor world : int = this.Get (nameof this.Cursor) world
+        member this.SetCursor (value : int) world = this.Set (nameof this.Cursor) value world
+        member this.Cursor = lens (nameof this.Cursor) this this.GetCursor this.SetCursor
+        member this.TextEditEvent = Events.TextEditEvent --> this
+        member this.FocusEvent = Events.FocusEvent --> this
+
+/// Augments an entity with text box behavior.
+type TextBoxFacet () =
+    inherit Facet (false, false, false)
+
+    static let handleMouseLeftDown evt (world : World) =
+        let entity = evt.Subscriber : Entity
+        if world.Advancing && entity.GetVisible world then
+            let mutable transform = entity.GetTransform world
+            let perimeter = transform.Perimeter.Box2 // gui currently ignores rotation
+            let mousePositionWorld = World.getMousePostion2dWorld transform.Absolute world
+            if perimeter.Intersects mousePositionWorld then
+                if transform.Enabled && not (entity.GetFocused world) then
+                    let eventTrace = EventTrace.debug "TextBoxFacet" "handleMouseLeftDown" "" EventTrace.empty
+                    let world = World.publishPlus () entity.FocusEvent eventTrace entity true false world
+                    (Resolve, world)
+                else (Resolve, world)
+            else (Cascade, world)
+        else (Cascade, world)
+
+    static let handleKeyboardKeyChange evt (world : World) =
+        let entity = evt.Subscriber : Entity
+        let data = evt.Data : KeyboardKeyData
+        let cursor = entity.GetCursor world
+        let text = entity.GetText world
+        if  world.Advancing &&
+            entity.GetVisible world &&
+            entity.GetEnabled world &&
+            entity.GetFocused world &&
+            text.Length < entity.GetTextCapacity world then
+            let world =
+                if data.Down then
+                    if data.KeyboardKey = KeyboardKey.Left then 
+                        if cursor > 0 then
+                            let cursor = dec cursor
+                            let world = entity.SetCursor cursor world
+                            let eventTrace = EventTrace.debug "TextBoxFacet" "handleKeyboardKeyChange" "" EventTrace.empty
+                            World.publishPlus { Text = text; Cursor = cursor } entity.TextEditEvent eventTrace entity true false world
+                        else world
+                    elif data.KeyboardKey = KeyboardKey.Right then
+                        if cursor < text.Length then
+                            let cursor = inc cursor
+                            let eventTrace = EventTrace.debug "TextBoxFacet" "handleKeyboardKeyChange" "" EventTrace.empty
+                            World.publishPlus { Text = text; Cursor = cursor } entity.TextEditEvent eventTrace entity true false world
+                        else world
+                    elif data.KeyboardKey = KeyboardKey.Home || data.KeyboardKey = KeyboardKey.Up then
+                        let cursor = 0
+                        let world = entity.SetCursor cursor world
+                        let eventTrace = EventTrace.debug "TextBoxFacet" "handleKeyboardKeyChange" "" EventTrace.empty
+                        World.publishPlus { Text = text; Cursor = cursor } entity.TextEditEvent eventTrace entity true false world
+                    elif data.KeyboardKey = KeyboardKey.End || data.KeyboardKey = KeyboardKey.Down then
+                        let cursor = text.Length
+                        let world = entity.SetCursor cursor world
+                        let eventTrace = EventTrace.debug "TextBoxFacet" "handleKeyboardKeyChange" "" EventTrace.empty
+                        World.publishPlus { Text = text; Cursor = cursor } entity.TextEditEvent eventTrace entity true false world
+                    elif data.KeyboardKey = KeyboardKey.Backspace then
+                        if cursor > 0 && text.Length > 0 then
+                            let text = String.take (dec cursor) text + String.skip cursor text
+                            let cursor = dec cursor
+                            let world = entity.SetText text world
+                            let world = entity.SetCursor cursor world
+                            let eventTrace = EventTrace.debug "TextBoxFacet" "handleKeyboardKeyChange" "" EventTrace.empty
+                            World.publishPlus { Text = text; Cursor = cursor } entity.TextEditEvent eventTrace entity true false world
+                        else world
+                    elif data.KeyboardKey = KeyboardKey.Delete then
+                        let text = entity.GetText world
+                        if cursor >= 0 && cursor < text.Length then
+                            let text = String.take cursor text + String.skip (inc cursor) text
+                            let world = entity.SetText text world
+                            let eventTrace = EventTrace.debug "TextBoxFacet" "handleKeyboardKeyChange" "" EventTrace.empty
+                            World.publishPlus { Text = text; Cursor = cursor } entity.TextEditEvent eventTrace entity true false world
+                        else world
+                    else world
+                else world
+            (Resolve, world)
+        else (Cascade, world)
+
+    static let handleTextInput evt (world : World) =
+        let entity = evt.Subscriber : Entity
+        let cursor = entity.GetCursor world
+        let text = entity.GetText world
+        if  world.Advancing &&
+            entity.GetVisible world &&
+            entity.GetEnabled world &&
+            entity.GetFocused world &&
+            text.Length < entity.GetTextCapacity world then
+            let text =
+                if cursor < 0 || cursor >= text.Length
+                then text + string evt.Data.TextInput
+                else String.take cursor text + string evt.Data.TextInput + String.skip cursor text
+            let cursor = inc cursor
+            let world = entity.SetText text world
+            let world = if cursor >= 0 then entity.SetCursor cursor world else world
+            let eventTrace = EventTrace.debug "TextBoxFacet" "handleTextInput" "" EventTrace.empty
+            let world = World.publishPlus { Text = text; Cursor = cursor } entity.TextEditEvent eventTrace entity true false world
+            (Resolve, world)
+        else (Cascade, world)
+
+    static member Properties =
+        [define Entity.Text ""
+         define Entity.Font Assets.Default.Font
+         define Entity.FontSizing None
+         define Entity.FontStyling Set.empty
+         define Entity.TextMargin (v2 2.0f 0.0f)
+         define Entity.TextColor Color.White
+         define Entity.TextColorDisabled Constants.Gui.ColorDisabledDefault
+         define Entity.TextOffset v2Zero
+         define Entity.TextShift 0.5f
+         define Entity.TextCapacity 14
+         define Entity.Focused false
+         nonPersistent Entity.Cursor 0]
+
+    override this.Register (entity, world) =
+        let world = World.sense handleMouseLeftDown Game.MouseLeftDownEvent entity (nameof TextBoxFacet) world
+        let world = World.sense handleKeyboardKeyChange Game.KeyboardKeyChangeEvent entity (nameof TextBoxFacet) world
+        let world = World.sense handleTextInput Game.TextInputEvent entity (nameof TextBoxFacet) world
+        let world = entity.SetCursor (entity.GetText world).Length world
+        world
+
+    override this.Render (_, entity, world) =
+        let mutable transform = entity.GetTransform world
+        let absolute = transform.Absolute
+        let enabled = transform.Enabled
+        let perimeter = transform.Perimeter
+        let offset = (entity.GetTextOffset world).V3
+        let elevation = transform.Elevation
+        let shift = entity.GetTextShift world
+        let clipOpt = ValueSome transform.Bounds2d.Box2
+        let justification = Justified (JustifyLeft, JustifyMiddle)
+        let focused = entity.GetFocused world
+        let cursorOpt = if enabled && focused then Some (entity.GetCursor world) else None
+        let margin = (entity.GetTextMargin world).V3
+        let color = if enabled then entity.GetTextColor world else entity.GetTextColorDisabled world
+        let font = entity.GetFont world
+        let fontSizing = entity.GetFontSizing world
+        let fontStyling = entity.GetFontStyling world
+        let text = entity.GetText world
+        World.renderGuiText absolute perimeter offset elevation shift clipOpt justification cursorOpt margin color font fontSizing fontStyling text world
 
     override this.GetAttributesInferred (_, _) =
         AttributesInferred.important Constants.Engine.EntityGuiSizeDefault v3Zero
@@ -1148,8 +1305,7 @@ type EffectFacet () =
                 | BillboardParticlesDescriptor descriptor ->
                     let message =
                         RenderBillboardParticles
-                            { Absolute = descriptor.Absolute
-                              Presence = presence
+                            { Presence = presence
                               MaterialProperties = descriptor.MaterialProperties
                               Material = descriptor.Material
                               ShadowOffset = descriptor.ShadowOffset
@@ -1172,6 +1328,9 @@ module RigidBodyFacetExtensions =
         member this.GetBodyType world : BodyType = this.Get (nameof this.BodyType) world
         member this.SetBodyType (value : BodyType) world = this.Set (nameof this.BodyType) value world
         member this.BodyType = lens (nameof this.BodyType) this this.GetBodyType this.SetBodyType
+        member this.GetBodyShape world : BodyShape = this.Get (nameof this.BodyShape) world
+        member this.SetBodyShape (value : BodyShape) world = this.Set (nameof this.BodyShape) value world
+        member this.BodyShape = lens (nameof this.BodyShape) this this.GetBodyShape this.SetBodyShape
         member this.GetSleepingAllowed world : bool = this.Get (nameof this.SleepingAllowed) world
         member this.SetSleepingAllowed (value : bool) world = this.Set (nameof this.SleepingAllowed) value world
         member this.SleepingAllowed = lens (nameof this.SleepingAllowed) this this.GetSleepingAllowed this.SetSleepingAllowed
@@ -1214,9 +1373,6 @@ module RigidBodyFacetExtensions =
         member this.GetCollisionMask world : string = this.Get (nameof this.CollisionMask) world
         member this.SetCollisionMask (value : string) world = this.Set (nameof this.CollisionMask) value world
         member this.CollisionMask = lens (nameof this.CollisionMask) this this.GetCollisionMask this.SetCollisionMask
-        member this.GetBodyShape world : BodyShape = this.Get (nameof this.BodyShape) world
-        member this.SetBodyShape (value : BodyShape) world = this.Set (nameof this.BodyShape) value world
-        member this.BodyShape = lens (nameof this.BodyShape) this this.GetBodyShape this.SetBodyShape
         member this.GetPhysicsMotion world : PhysicsMotion = this.Get (nameof this.PhysicsMotion) world
         member this.SetPhysicsMotion (value : PhysicsMotion) world = this.Set (nameof this.PhysicsMotion) value world
         member this.PhysicsMotion = lens (nameof this.PhysicsMotion) this this.GetPhysicsMotion this.SetPhysicsMotion
@@ -1256,13 +1412,6 @@ type RigidBodyFacet () =
             (Cascade, World.setBodyCenter center bodyId world)
         else (Cascade, world)
 
-    static let propagatePhysicsPosition (entity : Entity) (evt : Event<ChangeData, Entity>) world =
-        if entity.GetPhysicsMotion world <> ManualMotion then
-            let bodyId = entity.GetBodyId world
-            let center = evt.Data.Value :?> Vector3
-            (Cascade, World.setBodyCenter center bodyId world)
-        else (Cascade, world)
-
     static let propagatePhysicsRotation (entity : Entity) (evt : Event<ChangeData, Entity>) world =
         if entity.GetPhysicsMotion world <> ManualMotion then
             let bodyId = entity.GetBodyId world
@@ -1292,11 +1441,12 @@ type RigidBodyFacet () =
         [define Entity.Static true
          define Entity.BodyEnabled true
          define Entity.BodyType Static
+         define Entity.BodyShape (BoxShape { Size = v3One; TransformOpt = None; PropertiesOpt = None })
          define Entity.SleepingAllowed true
          define Entity.Friction 0.5f
          define Entity.Restitution 0.0f
          define Entity.LinearVelocity v3Zero
-         define Entity.LinearDamping 0.0f // leave this up to friction by default
+         define Entity.LinearDamping 0.0f
          define Entity.AngularVelocity v3Zero
          define Entity.AngularDamping 0.2f
          define Entity.AngularFactor v3One
@@ -1306,7 +1456,6 @@ type RigidBodyFacet () =
          define Entity.CollisionDetection Discontinuous
          define Entity.CollisionCategories "1"
          define Entity.CollisionMask Constants.Physics.CollisionWildcard
-         define Entity.BodyShape (BoxShape { Size = v3One; TransformOpt = None; PropertiesOpt = None })
          define Entity.PhysicsMotion SynchronizedMotion
          define Entity.Sensor false
          define Entity.Observable false
@@ -1318,31 +1467,13 @@ type RigidBodyFacet () =
 
         // OPTIMIZATION: using manual unsubscription in order to use less live objects for subscriptions.
         // OPTIMIZATION: share lambdas to reduce live object count.
-        let subIds = Array.init 24 (fun _ -> Gen.id64)
-        let world = World.subscribePlus subIds.[0] (propagatePhysicsCenter entity) (entity.ChangeEvent (nameof entity.Position)) entity world |> snd
+        // OPTIMIZATION: using special BodyPropertiesAffecting change event to reduce subscription count.
+        let subIds = Array.init 5 (fun _ -> Gen.id64)
+        let world = World.subscribePlus subIds.[0] (propagatePhysicsCenter entity) (entity.ChangeEvent (nameof entity.Transform)) entity world |> snd
         let world = World.subscribePlus subIds.[1] (propagatePhysicsRotation entity) (entity.ChangeEvent (nameof entity.Rotation)) entity world |> snd
         let world = World.subscribePlus subIds.[2] (propagatePhysicsLinearVelocity entity) (entity.ChangeEvent (nameof entity.LinearVelocity)) entity world |> snd
         let world = World.subscribePlus subIds.[3] (propagatePhysicsAngularVelocity entity) (entity.ChangeEvent (nameof entity.AngularVelocity)) entity world |> snd
-        let world = World.subscribePlus subIds.[4] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.Scale)) entity world |> snd
-        let world = World.subscribePlus subIds.[5] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.Offset)) entity world |> snd
-        let world = World.subscribePlus subIds.[6] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.Size)) entity world |> snd
-        let world = World.subscribePlus subIds.[7] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.BodyEnabled)) entity world |> snd
-        let world = World.subscribePlus subIds.[8] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.BodyType)) entity world |> snd
-        let world = World.subscribePlus subIds.[9] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.SleepingAllowed)) entity world |> snd
-        let world = World.subscribePlus subIds.[10] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.Friction)) entity world |> snd
-        let world = World.subscribePlus subIds.[11] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.Restitution)) entity world |> snd
-        let world = World.subscribePlus subIds.[12] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.LinearDamping)) entity world |> snd
-        let world = World.subscribePlus subIds.[13] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.AngularDamping)) entity world |> snd
-        let world = World.subscribePlus subIds.[14] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.AngularFactor)) entity world |> snd
-        let world = World.subscribePlus subIds.[15] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.Substance)) entity world |> snd
-        let world = World.subscribePlus subIds.[16] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.GravityOverride)) entity world |> snd
-        let world = World.subscribePlus subIds.[17] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.CharacterProperties)) entity world |> snd
-        let world = World.subscribePlus subIds.[18] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.CollisionDetection)) entity world |> snd
-        let world = World.subscribePlus subIds.[19] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.CollisionCategories)) entity world |> snd
-        let world = World.subscribePlus subIds.[20] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.CollisionMask)) entity world |> snd
-        let world = World.subscribePlus subIds.[21] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.BodyShape)) entity world |> snd
-        let world = World.subscribePlus subIds.[22] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.Sensor)) entity world |> snd
-        let world = World.subscribePlus subIds.[23] (propagatePhysics entity) (entity.ChangeEvent (nameof entity.Observable)) entity world |> snd
+        let world = World.subscribePlus subIds.[4] (propagatePhysics entity) (entity.ChangeEvent "BodyPropertiesAffecting") entity world |> snd
         let unsubscribe = fun world ->
             Array.fold (fun world subId -> World.unsubscribe subId world) world subIds
         let callback = fun evt world ->
@@ -1360,13 +1491,13 @@ type RigidBodyFacet () =
     override this.RegisterPhysics (entity, world) =
         let mutable transform = entity.GetTransform world
         let bodyProperties =
-            { Center = if entity.GetIs2d world then transform.PerimeterCenter else transform.Position
+            { Enabled = entity.GetBodyEnabled world
+              Center = if entity.GetIs2d world then transform.PerimeterCenter else transform.Position
               Rotation = transform.Rotation
               Scale = transform.Scale
               BodyShape = getBodyShape entity world
               BodyType = entity.GetBodyType world
               SleepingAllowed = entity.GetSleepingAllowed world
-              Enabled = entity.GetBodyEnabled world
               Friction = entity.GetFriction world
               Restitution = entity.GetRestitution world
               LinearVelocity = entity.GetLinearVelocity world
@@ -1867,7 +1998,7 @@ type LayoutFacet () =
         | layout ->
             let children =
                 World.getEntityMounters entity world |>
-                Array.ofSeq |>
+                Array.ofSeq |> // array for sorting
                 Array.map (fun child ->
                     let layoutOrder =
                         if child.Has<LayoutFacet> world
@@ -1953,8 +2084,7 @@ type SkyBoxFacet () =
     inherit Facet (false, false, false)
 
     static member Properties =
-        [define Entity.Absolute true
-         define Entity.Presence Omnipresent
+        [define Entity.Presence Omnipresent
          define Entity.Static true
          define Entity.AmbientColor Color.White
          define Entity.AmbientBrightness 0.5f
@@ -2003,6 +2133,14 @@ module LightProbe3dFacetExtensions =
 type LightProbe3dFacet () =
     inherit Facet (false, true, false)
 
+    static let handleProbeVisibleChange (evt : Event<ChangeData, Entity>) world =
+        let entity = evt.Subscriber
+        let world =
+            if evt.Data.Value :?> bool && entity.Group.GetVisible world
+            then entity.SetProbeStale true world
+            else world
+        (Cascade, world)
+
     static let handleProbeStaleChange (evt : Event<ChangeData, Entity>) world =
         let world =
             if evt.Data.Value :?> bool
@@ -2021,6 +2159,8 @@ type LightProbe3dFacet () =
          nonPersistent Entity.ProbeStale false]
 
     override this.Register (entity, world) =
+        let world = World.sense handleProbeVisibleChange entity.Group.Visible.ChangeEvent entity (nameof LightProbe3dFacet) world
+        let world = World.sense handleProbeVisibleChange entity.Visible.ChangeEvent entity (nameof LightProbe3dFacet) world
         let world = World.sense handleProbeStaleChange entity.ProbeStale.ChangeEvent entity (nameof LightProbe3dFacet) world
         entity.SetProbeStale true world
 
@@ -2100,33 +2240,32 @@ type Light3dFacet () =
          define Entity.DesireShadows false]
 
     override this.Render (renderPass, entity, world) =
-        if entity.GetEnabled world then
-            let lightId = entity.GetId world
-            let position = entity.GetPosition world
-            let rotation = entity.GetRotation world
-            let direction = rotation.Down
-            let color = entity.GetColor world
-            let brightness = entity.GetBrightness world
-            let attenuationLinear = entity.GetAttenuationLinear world
-            let attenuationQuadratic = entity.GetAttenuationQuadratic world
-            let lightCutoff = entity.GetLightCutoff world
-            let lightType = entity.GetLightType world
-            let desireShadows = entity.GetDesireShadows world
-            World.enqueueRenderMessage3d
-                (RenderLight3d
-                    { LightId = lightId
-                      Origin = position
-                      Rotation = rotation
-                      Direction = direction
-                      Color = color
-                      Brightness = brightness
-                      AttenuationLinear = attenuationLinear
-                      AttenuationQuadratic = attenuationQuadratic
-                      LightCutoff = lightCutoff
-                      LightType = lightType
-                      DesireShadows = desireShadows
-                      RenderPass = renderPass })
-                world
+        let lightId = entity.GetId world
+        let position = entity.GetPosition world
+        let rotation = entity.GetRotation world
+        let direction = rotation.Down
+        let color = entity.GetColor world
+        let brightness = entity.GetBrightness world
+        let attenuationLinear = entity.GetAttenuationLinear world
+        let attenuationQuadratic = entity.GetAttenuationQuadratic world
+        let lightCutoff = entity.GetLightCutoff world
+        let lightType = entity.GetLightType world
+        let desireShadows = entity.GetDesireShadows world
+        World.enqueueRenderMessage3d
+            (RenderLight3d
+                { LightId = lightId
+                  Origin = position
+                  Rotation = rotation
+                  Direction = direction
+                  Color = color
+                  Brightness = brightness
+                  AttenuationLinear = attenuationLinear
+                  AttenuationQuadratic = attenuationQuadratic
+                  LightCutoff = lightCutoff
+                  LightType = lightType
+                  DesireShadows = desireShadows
+                  RenderPass = renderPass })
+            world
 
     override this.RayCast (ray, entity, world) =
         let intersectionOpt = ray.Intersects (entity.GetBounds world)
@@ -2181,7 +2320,6 @@ type StaticBillboardFacet () =
 
     override this.Render (renderPass, entity, world) =
         let mutable transform = entity.GetTransform world
-        let absolute = transform.Absolute
         let affineMatrix = transform.AffineMatrix
         let presence = transform.Presence
         let insetOpt = entity.GetInsetOpt world
@@ -2194,7 +2332,7 @@ type StaticBillboardFacet () =
             | Forward (subsort, sort) -> ForwardRenderType (subsort, sort)
         World.enqueueRenderMessage3d
             (RenderBillboard
-                { Absolute = absolute; Presence = presence; ModelMatrix = affineMatrix; InsetOpt = insetOpt
+                { Presence = presence; ModelMatrix = affineMatrix; InsetOpt = insetOpt
                   MaterialProperties = properties; Material = material; ShadowOffset = shadowOffset; RenderType = renderType; RenderPass = renderPass })
             world
 
@@ -2337,7 +2475,7 @@ type BasicStaticBillboardEmitterFacet () =
         (Cascade, world)
 
     static let handleEmitterStyleChange evt world =
-        let entity = evt.Subscriber
+        let entity = evt.Subscriber : Entity
         let emitter = makeEmitter entity world
         let world = mapEmitter (constant emitter) entity world
         (Cascade, world)
@@ -2385,7 +2523,7 @@ type BasicStaticBillboardEmitterFacet () =
          define Entity.BasicParticleSeed { Life = Particles.Life.make GameTime.zero (GameTime.ofSeconds 1.0f); Body = Particles.Body.defaultBody; Size = v3Dup 0.25f; Offset = v3Zero; Inset = box2Zero; Color = Color.One; Emission = Color.Zero; Flip = FlipNone }
          define Entity.EmitterConstraint Particles.Constraint.empty
          define Entity.EmitterStyle "BasicStaticBillboardEmitter"
-         define Entity.EmitterRenderStyle (Forward (0.0f, 0.0f))
+         define Entity.EmitterRenderStyle Deferred
          define Entity.EmitterShadowEnabled true
          define Entity.EmitterShadowOffset Constants.Engine.ParticleShadowOffsetDefault
          nonPersistent Entity.ParticleSystem Particles.ParticleSystem.empty]
@@ -2442,28 +2580,27 @@ type BasicStaticBillboardEmitterFacet () =
                     | Particles.BillboardParticlesDescriptor descriptor ->
                         let emitterProperties = entity.GetEmitterMaterialProperties world
                         let properties =
-                            { AlbedoOpt = match emitterProperties.AlbedoOpt with Some albedo -> Some albedo | None -> descriptor.MaterialProperties.AlbedoOpt
-                              RoughnessOpt = match emitterProperties.RoughnessOpt with Some roughness -> Some roughness | None -> descriptor.MaterialProperties.RoughnessOpt
-                              MetallicOpt = match emitterProperties.MetallicOpt with Some metallic -> Some metallic | None -> descriptor.MaterialProperties.MetallicOpt
-                              AmbientOcclusionOpt = match emitterProperties.AmbientOcclusionOpt with Some ambientOcclusion -> Some ambientOcclusion | None -> descriptor.MaterialProperties.AmbientOcclusionOpt
-                              EmissionOpt = match emitterProperties.EmissionOpt with Some emission -> Some emission | None -> descriptor.MaterialProperties.EmissionOpt
-                              HeightOpt = match emitterProperties.HeightOpt with Some height -> Some height | None -> descriptor.MaterialProperties.HeightOpt
-                              IgnoreLightMapsOpt = match emitterProperties.IgnoreLightMapsOpt with Some ignoreLightMaps -> Some ignoreLightMaps | None -> descriptor.MaterialProperties.IgnoreLightMapsOpt
-                              OpaqueDistanceOpt = None }
+                            { AlbedoOpt = match emitterProperties.AlbedoOpt with ValueSome albedo -> ValueSome albedo | ValueNone -> descriptor.MaterialProperties.AlbedoOpt
+                              RoughnessOpt = match emitterProperties.RoughnessOpt with ValueSome roughness -> ValueSome roughness | ValueNone -> descriptor.MaterialProperties.RoughnessOpt
+                              MetallicOpt = match emitterProperties.MetallicOpt with ValueSome metallic -> ValueSome metallic | ValueNone -> descriptor.MaterialProperties.MetallicOpt
+                              AmbientOcclusionOpt = match emitterProperties.AmbientOcclusionOpt with ValueSome ambientOcclusion -> ValueSome ambientOcclusion | ValueNone -> descriptor.MaterialProperties.AmbientOcclusionOpt
+                              EmissionOpt = match emitterProperties.EmissionOpt with ValueSome emission -> ValueSome emission | ValueNone -> descriptor.MaterialProperties.EmissionOpt
+                              HeightOpt = match emitterProperties.HeightOpt with ValueSome height -> ValueSome height | ValueNone -> descriptor.MaterialProperties.HeightOpt
+                              IgnoreLightMapsOpt = match emitterProperties.IgnoreLightMapsOpt with ValueSome ignoreLightMaps -> ValueSome ignoreLightMaps | ValueNone -> descriptor.MaterialProperties.IgnoreLightMapsOpt
+                              OpaqueDistanceOpt = ValueNone }
                         let emitterMaterial = entity.GetEmitterMaterial world
                         let material =
-                            { AlbedoImageOpt = match emitterMaterial.AlbedoImageOpt with Some albedoImage -> Some albedoImage | None -> descriptor.Material.AlbedoImageOpt
-                              RoughnessImageOpt = match emitterMaterial.RoughnessImageOpt with Some roughnessImage -> Some roughnessImage | None -> descriptor.Material.RoughnessImageOpt
-                              MetallicImageOpt = match emitterMaterial.MetallicImageOpt with Some metallicImage -> Some metallicImage | None -> descriptor.Material.MetallicImageOpt
-                              AmbientOcclusionImageOpt = match emitterMaterial.AmbientOcclusionImageOpt with Some ambientOcclusionImage -> Some ambientOcclusionImage | None -> descriptor.Material.AmbientOcclusionImageOpt
-                              EmissionImageOpt = match emitterMaterial.EmissionImageOpt with Some emissionImage -> Some emissionImage | None -> descriptor.Material.EmissionImageOpt
-                              NormalImageOpt = match emitterMaterial.NormalImageOpt with Some normalImage -> Some normalImage | None -> descriptor.Material.NormalImageOpt
-                              HeightImageOpt = match emitterMaterial.HeightImageOpt with Some heightImage -> Some heightImage | None -> descriptor.Material.HeightImageOpt
-                              TwoSidedOpt = match emitterMaterial.TwoSidedOpt with Some twoSided -> Some twoSided | None -> descriptor.Material.TwoSidedOpt }
+                            { AlbedoImageOpt = match emitterMaterial.AlbedoImageOpt with ValueSome albedoImage -> ValueSome albedoImage | ValueNone -> descriptor.Material.AlbedoImageOpt
+                              RoughnessImageOpt = match emitterMaterial.RoughnessImageOpt with ValueSome roughnessImage -> ValueSome roughnessImage | ValueNone -> descriptor.Material.RoughnessImageOpt
+                              MetallicImageOpt = match emitterMaterial.MetallicImageOpt with ValueSome metallicImage -> ValueSome metallicImage | ValueNone -> descriptor.Material.MetallicImageOpt
+                              AmbientOcclusionImageOpt = match emitterMaterial.AmbientOcclusionImageOpt with ValueSome ambientOcclusionImage -> ValueSome ambientOcclusionImage | ValueNone -> descriptor.Material.AmbientOcclusionImageOpt
+                              EmissionImageOpt = match emitterMaterial.EmissionImageOpt with ValueSome emissionImage -> ValueSome emissionImage | ValueNone -> descriptor.Material.EmissionImageOpt
+                              NormalImageOpt = match emitterMaterial.NormalImageOpt with ValueSome normalImage -> ValueSome normalImage | ValueNone -> descriptor.Material.NormalImageOpt
+                              HeightImageOpt = match emitterMaterial.HeightImageOpt with ValueSome heightImage -> ValueSome heightImage | ValueNone -> descriptor.Material.HeightImageOpt
+                              TwoSidedOpt = match emitterMaterial.TwoSidedOpt with ValueSome twoSided -> ValueSome twoSided | ValueNone -> descriptor.Material.TwoSidedOpt }
                         Some
                             (RenderBillboardParticles
-                                { Absolute = descriptor.Absolute
-                                  Presence = presence
+                                { Presence = presence
                                   MaterialProperties = properties
                                   Material = material
                                   ShadowOffset = descriptor.ShadowOffset
@@ -2498,7 +2635,6 @@ type StaticModelFacet () =
 
     override this.Render (renderPass, entity, world) =
         let mutable transform = entity.GetTransform world
-        let absolute = transform.Absolute
         let affineMatrix = transform.AffineMatrix
         let presence = transform.Presence
         let insetOpt = ValueOption.ofOption (entity.GetInsetOpt world)
@@ -2508,22 +2644,22 @@ type StaticModelFacet () =
             match entity.GetRenderStyle world with
             | Deferred -> DeferredRenderType
             | Forward (subsort, sort) -> ForwardRenderType (subsort, sort)
-        World.renderStaticModelFast (absolute, &affineMatrix, presence, insetOpt, &properties, staticModel, renderType, renderPass, world)
+        World.renderStaticModelFast (&affineMatrix, presence, insetOpt, &properties, staticModel, renderType, renderPass, world)
 
     override this.GetAttributesInferred (entity, world) =
         let staticModel = entity.GetStaticModel world
         match Metadata.tryGetStaticModelMetadata staticModel with
-        | Some staticModelMetadata ->
+        | ValueSome staticModelMetadata ->
             let bounds = staticModelMetadata.Bounds
             AttributesInferred.important bounds.Size bounds.Center
-        | None -> base.GetAttributesInferred (entity, world)
+        | ValueNone -> base.GetAttributesInferred (entity, world)
 
     override this.RayCast (ray, entity, world) =
         let affineMatrix = entity.GetAffineMatrix world
         let inverseMatrix = Matrix4x4.Invert affineMatrix |> snd
         let rayEntity = ray.Transform inverseMatrix
         match Metadata.tryGetStaticModelMetadata (entity.GetStaticModel world) with
-        | Some staticModelMetadata ->
+        | ValueSome staticModelMetadata ->
             let intersectionses =
                 Array.map (fun (surface : OpenGL.PhysicallyBased.PhysicallyBasedSurface) ->
                     let geometry = surface.PhysicallyBasedGeometry
@@ -2540,7 +2676,7 @@ type StaticModelFacet () =
                     else [||])
                     staticModelMetadata.Surfaces
             Array.concat intersectionses
-        | None -> [||]
+        | ValueNone -> [||]
 
 [<AutoOpen>]
 module StaticModelSurfaceFacetExtensions =
@@ -2555,7 +2691,7 @@ type StaticModelSurfaceFacet () =
 
     static member Properties =
         [define Entity.InsetOpt None
-         define Entity.MaterialProperties MaterialProperties.empty
+         define Entity.MaterialProperties MaterialProperties.defaultProperties
          define Entity.Material Material.empty
          define Entity.RenderStyle Deferred
          define Entity.StaticModel Assets.Default.StaticModel
@@ -2563,7 +2699,6 @@ type StaticModelSurfaceFacet () =
 
     override this.Render (renderPass, entity, world) =
         let mutable transform = entity.GetTransform world
-        let absolute = transform.Absolute
         let affineMatrix = transform.AffineMatrix
         let presence = transform.Presence
         let insetOpt = Option.toValueOption (entity.GetInsetOpt world)
@@ -2575,22 +2710,22 @@ type StaticModelSurfaceFacet () =
             match entity.GetRenderStyle world with
             | Deferred -> DeferredRenderType
             | Forward (subsort, sort) -> ForwardRenderType (subsort, sort)
-        World.renderStaticModelSurfaceFast (absolute, &affineMatrix, presence, insetOpt, &properties, &material, staticModel, surfaceIndex, renderType, renderPass, world)
+        World.renderStaticModelSurfaceFast (&affineMatrix, presence, insetOpt, &properties, &material, staticModel, surfaceIndex, renderType, renderPass, world)
 
     override this.GetAttributesInferred (entity, world) =
         match Metadata.tryGetStaticModelMetadata (entity.GetStaticModel world) with
-        | Some staticModelMetadata ->
+        | ValueSome staticModelMetadata ->
             let surfaceIndex = entity.GetSurfaceIndex world
             if surfaceIndex > -1 && surfaceIndex < staticModelMetadata.Surfaces.Length then
                 let bounds = staticModelMetadata.Surfaces.[surfaceIndex].SurfaceBounds
                 AttributesInferred.important bounds.Size bounds.Center
             else base.GetAttributesInferred (entity, world)
-        | None -> base.GetAttributesInferred (entity, world)
+        | ValueNone -> base.GetAttributesInferred (entity, world)
 
     override this.RayCast (ray, entity, world) =
         let rayEntity = ray.Transform (Matrix4x4.Invert (entity.GetAffineMatrix world) |> snd)
         match Metadata.tryGetStaticModelMetadata (entity.GetStaticModel world) with
-        | Some staticModelMetadata ->
+        | ValueSome staticModelMetadata ->
             let surfaceIndex = entity.GetSurfaceIndex world
             if surfaceIndex < staticModelMetadata.Surfaces.Length then
                 let surface = staticModelMetadata.Surfaces.[surfaceIndex]
@@ -2601,7 +2736,7 @@ type StaticModelSurfaceFacet () =
                     intersections |> Seq.map snd' |> Seq.toArray
                 else [||]
             else [||]
-        | None -> [||]
+        | ValueNone -> [||]
 
 [<AutoOpen>]
 module AnimatedModelFacetExtensions =
@@ -2654,7 +2789,7 @@ module AnimatedModelFacetExtensions =
             let time = world.GameTime
             let animations = this.GetAnimations world
             let animatedModel = this.GetAnimatedModel world
-            let sceneOpt = match Metadata.tryGetAnimatedModelMetadata animatedModel with Some model -> model.SceneOpt | None -> None
+            let sceneOpt = match Metadata.tryGetAnimatedModelMetadata animatedModel with ValueSome model -> model.SceneOpt | ValueNone -> None
             match this.TryComputeBoneTransforms time animations sceneOpt with
             | Some (boneIds, boneOffsets, boneTransforms) ->
                 let world = this.SetBoneIdsOpt (Some boneIds) world
@@ -2701,7 +2836,7 @@ type AnimatedModelFacet () =
         let time = world.GameTime
         let animations = entity.GetAnimations world
         let animatedModel = entity.GetAnimatedModel world
-        let sceneOpt = match Metadata.tryGetAnimatedModelMetadata animatedModel with Some model -> model.SceneOpt | None -> None
+        let sceneOpt = match Metadata.tryGetAnimatedModelMetadata animatedModel with ValueSome model -> model.SceneOpt | ValueNone -> None
         let resultOpt =
             match World.tryAwaitJob (world.DateTime + TimeSpan.FromSeconds 0.001) (entity, nameof AnimatedModelFacet) world with
             | Some (JobCompletion (_, _, (:? ((Dictionary<string, int> * Matrix4x4 array * Matrix4x4 array) option) as boneOffsetsAndTransformsOpt))) -> boneOffsetsAndTransformsOpt
@@ -2720,30 +2855,29 @@ type AnimatedModelFacet () =
 
     override this.Render (renderPass, entity, world) =
         let mutable transform = entity.GetTransform world
-        let absolute = transform.Absolute
         let affineMatrix = transform.AffineMatrix
         let presence = transform.Presence
         let insetOpt = Option.toValueOption (entity.GetInsetOpt world)
         let properties = entity.GetMaterialProperties world
         let animatedModel = entity.GetAnimatedModel world
         match entity.GetBoneTransformsOpt world with
-        | Some boneTransforms -> World.renderAnimatedModelFast (absolute, &affineMatrix, presence, insetOpt, &properties, boneTransforms, animatedModel, renderPass, world)
+        | Some boneTransforms -> World.renderAnimatedModelFast (&affineMatrix, presence, insetOpt, &properties, boneTransforms, animatedModel, renderPass, world)
         | None -> ()
 
     override this.GetAttributesInferred (entity, world) =
         let animatedModel = entity.GetAnimatedModel world
         match Metadata.tryGetAnimatedModelMetadata animatedModel with
-        | Some animatedModelMetadata ->
+        | ValueSome animatedModelMetadata ->
             let bounds = animatedModelMetadata.Bounds
             AttributesInferred.important bounds.Size bounds.Center
-        | None -> base.GetAttributesInferred (entity, world)
+        | ValueNone -> base.GetAttributesInferred (entity, world)
 
     override this.RayCast (ray, entity, world) =
         let affineMatrix = entity.GetAffineMatrix world
         let inverseMatrix = Matrix4x4.Invert affineMatrix |> snd
         let rayEntity = ray.Transform inverseMatrix
         match Metadata.tryGetAnimatedModelMetadata (entity.GetAnimatedModel world) with
-        | Some animatedModelMetadata ->
+        | ValueSome animatedModelMetadata ->
             let intersectionses =
                 Array.map (fun (surface : OpenGL.PhysicallyBased.PhysicallyBasedSurface) ->
                     let geometry = surface.PhysicallyBasedGeometry
@@ -2760,7 +2894,7 @@ type AnimatedModelFacet () =
                     else [||])
                     animatedModelMetadata.Surfaces
             Array.concat intersectionses
-        | None -> [||]
+        | ValueNone -> [||]
 
     override this.Edit (op, entity, world) =
         match op with
@@ -2771,7 +2905,7 @@ type AnimatedModelFacet () =
                 for i in 0 .. dec offsets.Length do
                     let offset = offsets.[i]
                     let transform = transforms.[i]
-                    World.imGuiCircle3d false (offset.Inverted * transform * affineMatrix).Translation 2.0f false Color.Yellow world
+                    World.imGuiCircle3d (offset.Inverted * transform * affineMatrix).Translation 2.0f false Color.Yellow world
                 world
             | (_, _) -> world
         | _ -> world
@@ -2807,8 +2941,8 @@ module TerrainFacetExtensions =
             match this.GetHeightMap world with
             | ImageHeightMap map ->
                 match Metadata.tryGetTextureSize map with
-                | Some textureSize -> Some textureSize
-                | None -> None
+                | ValueSome textureSize -> Some textureSize
+                | ValueNone -> None
             | RawHeightMap map -> Some map.Resolution
 
         /// Attempt to get the size of each terrain quad.
@@ -2883,13 +3017,13 @@ type TerrainFacet () =
                   TransformOpt = None
                   PropertiesOpt = None }
             let bodyProperties =
-                { Center = if entity.GetIs2d world then transform.PerimeterCenter else transform.Position
+                { Enabled = entity.GetBodyEnabled world
+                  Center = if entity.GetIs2d world then transform.PerimeterCenter else transform.Position
                   Rotation = transform.Rotation
                   Scale = transform.Scale
                   BodyShape = TerrainShape terrainShape
                   BodyType = Static
                   SleepingAllowed = true
-                  Enabled = entity.GetBodyEnabled world
                   Friction = entity.GetFriction world
                   Restitution = entity.GetRestitution world
                   LinearVelocity = v3Zero
@@ -2927,8 +3061,7 @@ type TerrainFacet () =
               Segments = entity.GetSegments world }
         World.enqueueRenderMessage3d
             (RenderTerrain
-                { Absolute = transform.Absolute
-                  Visible = transform.Visible
+                { Visible = transform.Visible
                   TerrainDescriptor = terrainDescriptor
                   RenderPass = renderPass })
             world
@@ -2998,8 +3131,9 @@ type NavBodyFacet () =
         let world = World.sense callback3 entity.UnregisteringEvent entity (nameof NavBodyFacet) world
 
         // unconditional registration behavior
-        let world = World.sense (fun _ world -> (Cascade, propagateNavBody entity world)) (entity.ChangeEvent (nameof entity.StaticModel)) entity (nameof NavBodyFacet) world
-        let world = World.sense (fun _ world -> (Cascade, propagateNavBody entity world)) (entity.ChangeEvent (nameof entity.SurfaceIndex)) entity (nameof NavBodyFacet) world
+        let callbackPnb evt world = (Cascade, propagateNavBody evt.Subscriber world)
+        let world = World.sense callbackPnb (entity.ChangeEvent (nameof entity.StaticModel)) entity (nameof NavBodyFacet) world
+        let world = World.sense callbackPnb (entity.ChangeEvent (nameof entity.SurfaceIndex)) entity (nameof NavBodyFacet) world
         propagateNavBody entity world
 
     override this.Unregister (entity, world) =

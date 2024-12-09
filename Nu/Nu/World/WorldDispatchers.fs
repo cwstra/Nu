@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
@@ -27,7 +27,7 @@ type GuiDispatcher () =
          define Entity.Elevation 1.0f
          define Entity.ElevationLocal 1.0f
          define Entity.Presence Omnipresent
-         define Entity.DisabledColor Constants.Gui.DisabledColorDefault]
+         define Entity.ColorDisabled Constants.Gui.ColorDisabledDefault]
 
 /// A 3d entity dispatcher.
 type Entity3dDispatcher (physical, lightProbe, light) =
@@ -122,6 +122,17 @@ type FeelerDispatcher () =
         [typeof<BackdroppableFacet>
          typeof<FeelerFacet>]
 
+/// Gives an entity the base behavior of a gui text box control.
+type TextBoxDispatcher () =
+    inherit GuiDispatcher ()
+
+    static member Facets =
+        [typeof<BackdroppableFacet>
+         typeof<TextBoxFacet>]
+
+    static member Properties =
+        [define Entity.BackdropImageOpt (Some Assets.Default.Label)]
+
 [<AutoOpen>]
 module FpsDispatcherExtensions =
     type Entity with
@@ -209,7 +220,34 @@ type Box2dDispatcher () =
 
     static member Properties =
         [define Entity.Static false
-         define Entity.BodyType Dynamic]
+         define Entity.BodyType Dynamic
+         define Entity.BodyShape (SphereShape { Radius = 0.5f; TransformOpt = None; PropertiesOpt = None })]
+
+/// Gives an entity the base behavior of a rigid 2d sphere using static physics.
+type Sphere2dDispatcher () =
+    inherit Entity2dDispatcher (true, false, false)
+
+    static member Facets =
+        [typeof<RigidBodyFacet>
+         typeof<StaticSpriteFacet>]
+
+    static member Properties =
+        [define Entity.BodyShape (SphereShape { Radius = 0.5f; TransformOpt = None; PropertiesOpt = None })
+         define Entity.StaticImage Assets.Default.Ball]
+
+/// Gives an entity the base behavior of a rigid 2d ball using dynamic physics.
+type Ball2dDispatcher () =
+    inherit Entity2dDispatcher (true, false, false)
+
+    static member Facets =
+        [typeof<RigidBodyFacet>
+         typeof<StaticSpriteFacet>]
+
+    static member Properties =
+        [define Entity.Static false
+         define Entity.BodyType Dynamic
+         define Entity.BodyShape (SphereShape { Radius = 0.5f; TransformOpt = None; PropertiesOpt = None })
+         define Entity.StaticImage Assets.Default.Ball]
 
 [<AutoOpen>]
 module Character2dDispatcherExtensions =
@@ -511,6 +549,34 @@ type Box3dDispatcher () =
         [define Entity.Static false
          define Entity.BodyType Dynamic]
 
+/// Gives an entity the base behavior of a rigid 3d sphere using static physics.
+type Sphere3dDispatcher () =
+    inherit Entity3dDispatcher (true, false, false)
+
+    static member Facets =
+        [typeof<RigidBodyFacet>
+         typeof<StaticModelFacet>
+         typeof<NavBodyFacet>]
+
+    static member Properties =
+        [define Entity.BodyShape (SphereShape { Radius = 0.5f; TransformOpt = None; PropertiesOpt = None })
+         define Entity.StaticModel Assets.Default.BallModel]
+
+/// Gives an entity the base behavior of a rigid 3d ball using dynamic physics.
+type Ball3dDispatcher () =
+    inherit Entity3dDispatcher (true, false, false)
+
+    static member Facets =
+        [typeof<RigidBodyFacet>
+         typeof<StaticModelFacet>
+         typeof<NavBodyFacet>]
+
+    static member Properties =
+        [define Entity.Static false
+         define Entity.BodyType Dynamic
+         define Entity.BodyShape (SphereShape { Radius = 0.5f; TransformOpt = None; PropertiesOpt = None })
+         define Entity.StaticModel Assets.Default.BallModel]
+
 [<AutoOpen>]
 module Character3dDispatcherExtensions =
     type Entity with
@@ -548,8 +614,8 @@ type Character3dDispatcher () =
         let backness = (linearVelocityAvg * 32.0f).Dot -rotation.Forward
         let rightness = (linearVelocityAvg * 32.0f).Dot rotation.Right
         let leftness = (linearVelocityAvg * 32.0f).Dot -rotation.Right
-        let turnRightness = if angularVelocity.Y < 0.0f then -angularVelocity.Y * 48.0f else 0.0f
-        let turnLeftness = if angularVelocity.Y > 0.0f then angularVelocity.Y * 48.0f else 0.0f
+        let turnRightness = if angularVelocityAvg.Y < 0.0f then -angularVelocityAvg.Y * 48.0f else 0.0f
+        let turnLeftness = if angularVelocityAvg.Y > 0.0f then angularVelocityAvg.Y * 48.0f else 0.0f
         let animations =
             [Animation.make GameTime.zero None "Armature|Idle" Loop 1.0f 0.5f None]
         let animations =
@@ -631,9 +697,9 @@ type Nav3dConfigDispatcher () =
                     Color (1.0f, 1.0f - height, height, 1.0f)
 
                 // draw edges and points
-                World.imGuiSegments3dPlus false nbrData.NavInteriorEdges 1.0f computeEdgeColor world
-                World.imGuiSegments3dPlus false nbrData.NavExteriorEdges 1.0f computeEdgeColor world
-                World.imGuiCircles3dPlus false nbrData.NavPoints 2.5f true computePointColor world
+                World.imGuiSegments3dPlus nbrData.NavInteriorEdges 1.0f computeEdgeColor world
+                World.imGuiSegments3dPlus nbrData.NavExteriorEdges 1.0f computeEdgeColor world
+                World.imGuiCircles3dPlus nbrData.NavPoints 2.5f true computePointColor world
                 world
 
             | None -> world

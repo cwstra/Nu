@@ -3,6 +3,7 @@ open System
 open System.Numerics
 open Prime
 open Nu
+open BlazeVector
 
 type [<SymbolicExpansion>] Player =
     { Alive : bool
@@ -46,12 +47,12 @@ type PlayerDispatcher () =
         [Entity.Size == v3 24.0f 48.0f 0.0f
          Entity.Presence == Omnipresent
          Entity.Static == false
-         Entity.AngularFactor == v3Zero
-         Entity.Friction == 0.0f
-         Entity.LinearDamping == 3.0f
-         Entity.GravityOverride == Some v3Zero
          Entity.BodyType == Dynamic
          Entity.BodyShape == CapsuleShape { Height = 0.5f; Radius = 0.25f; TransformOpt = None; PropertiesOpt = None }
+         Entity.Friction == 0.0f
+         Entity.LinearDamping == 3.0f
+         Entity.AngularFactor == v3Zero
+         Entity.GravityOverride == Some v3Zero
          Entity.CelCount == 16
          Entity.CelRun == 4
          Entity.CelSize == v2 48.0f 96.0f
@@ -121,7 +122,7 @@ type PlayerDispatcher () =
 
         | Shoot ->
             let (bullet, world) = World.createEntity<BulletDispatcher> NoOverlay None entity.Group world // OPTIMIZATION: NoOverlay to avoid reflection.
-            let world = bullet.SetPosition (entity.GetPosition world + v3 24.0f 0.0f 0.0f) world
+            let world = bullet.SetPosition (entity.GetPosition world + v3 24.0f 1.0f 0.0f) world
             let world = bullet.SetElevation (entity.GetElevation world) world
             let world = World.applyBodyLinearImpulse (v3 BulletForce 0.0f 0.0f) None (bullet.GetBodyId world) world
             World.playSound Constants.Audio.SoundVolumeDefault Assets.Gameplay.ShotSound world

@@ -3,6 +3,7 @@ open System
 open System.Numerics
 open Prime
 open Nu
+open BlazeVector
 
 // this represents the state of gameplay simulation.
 type GameplayState =
@@ -52,7 +53,7 @@ module GameplayExtensions =
 type GameplayDispatcher () =
     inherit ScreenDispatcher<Gameplay, GameplayMessage, GameplayCommand> (Gameplay.empty)
 
-    static let [<Literal>] SectionCount = 12
+    static let [<Literal>] SectionCount = 16
 
     // here we define the screen's fallback model depending on whether screen is selected
     override this.GetFallbackModel (_, screen, world) =
@@ -138,26 +139,26 @@ type GameplayDispatcher () =
     // here we describe the content of the game including the hud, the scene, and the player
     override this.Content (gameplay, _) =
 
-        [// the gui group
-         Content.group Simulants.GameplayGui.Name []
-             [Content.text Simulants.GameplayScore.Name
-                [Entity.Position == v3 260.0f 155.0f 0.0f
-                 Entity.Elevation == 10.0f
-                 Entity.Text := "Score: " + string gameplay.Score]
-              Content.button Simulants.GameplayQuit.Name
-                [Entity.Position == v3 232.0f -144.0f 0.0f
-                 Entity.Elevation == 10.0f
-                 Entity.Text == "Quit"
-                 Entity.ClickEvent => StartQuitting]]
-
-         // the scene group while playing
-         match gameplay.GameplayState with
-         | Playing ->
+        [// the scene group while playing
+         if gameplay.GameplayState = Playing then
             Content.group Simulants.GameplayScene.Name []
                 [Content.entity<PlayerDispatcher> Simulants.GameplayPlayer.Name
                     [Entity.Position == v3 -390.0f -50.0f 0.0f
                      Entity.Elevation == 1.0f
                      Entity.DieEvent => StartQuitting]]
+            
+         // the gui group
+         Content.group Simulants.GameplayGui.Name []
 
-         // no scene group otherwise
-         | Quit -> ()]
+             [// score
+              Content.text Simulants.GameplayScore.Name
+                [Entity.Position == v3 260.0f 155.0f 0.0f
+                 Entity.Elevation == 10.0f
+                 Entity.Text := "Score: " + string gameplay.Score]
+              
+              // quit
+              Content.button Simulants.GameplayQuit.Name
+                [Entity.Position == v3 232.0f -144.0f 0.0f
+                 Entity.Elevation == 10.0f
+                 Entity.Text == "Quit"
+                 Entity.ClickEvent => StartQuitting]]]

@@ -1,8 +1,9 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
+open System.IO
 open System.Numerics
 open Prime
 open Nu
@@ -29,14 +30,6 @@ module WorldImNui =
     /// Instructs ImNui static equality (.=) to act as dynamic equality (@=) for a frame.
     let mutable internal Reinitializing = false
 
-    /// Specifies a dynamic ImNui argument.
-    let
-#if !DEBUG
-        inline
-#endif
-        (@=) (lens : Lens<'a, 's>) (value : 'a) =
-        { ArgStatic = false; ArgLens = lens; ArgValue = value } : 's ArgImNui
-
     /// Specifies a static ImNui argument.
     let
 #if !DEBUG
@@ -45,9 +38,68 @@ module WorldImNui =
         (.=) (lens : Lens<'a, 's>) (value : 'a) =
         { ArgStatic = true; ArgLens = lens; ArgValue = value } : 's ArgImNui
 
+    /// Specifies a dynamic ImNui argument.
+    let
+#if !DEBUG
+        inline
+#endif
+        (@=) (lens : Lens<'a, 's>) (value : 'a) =
+        { ArgStatic = false; ArgLens = lens; ArgValue = value } : 's ArgImNui
+
     type World with
 
-        ///
+        static member internal tryProcessGame (game : Game) (world : World) =
+            let dispatcher = game.GetDispatcher world
+            dispatcher.TryProcess (game, world)
+
+        static member internal tryProcessScreen (screen : Screen) (world : World) =
+            let dispatcher = World.getScreenDispatcher screen world
+            dispatcher.TryProcess (screen, world)
+
+        static member internal tryProcessGroup (group : Group) (world : World) =
+            let dispatcher = group.GetDispatcher world
+            dispatcher.TryProcess (group, world)
+
+        static member internal tryProcessEntity (entity : Entity) (world : World) =
+            let dispatcher = entity.GetDispatcher world
+            dispatcher.TryProcess (entity, world)
+
+        /// Whether ImNui is reinitializing this frame (such as on a code reload).
+        member this.ReinitializingImNui =
+            Reinitializing
+
+        /// Whether ImNui is reinitializing this frame (such as on a code reload).
+        static member getReinitializingImNui (world : World) =
+            world.ReinitializingImNui
+
+        /// ImNui subscribe to the given event address.
+        static member doSubscription<'d> name (eventAddress : 'd Address) (world : World) : 'd FQueue * World =
+            let eventAddress' =
+                if not (Array.contains "Event" eventAddress.Names)
+                then Address.makeFromArray<'d> (Array.concat [|eventAddress.Names; [|"Event"|]; world.ContextImNui.Names|])
+                else eventAddress
+            let subscriptionKey = (name, eventAddress :> Address, eventAddress' :> Address)
+            let world =
+                match world.SubscriptionImNuis.TryGetValue subscriptionKey with
+                | (true, subscriptionImNui) -> World.utilizeSubscriptionImNui subscriptionKey subscriptionImNui world
+                | (false, _) ->
+                    let subId = Gen.id64
+                    let (_, world) =
+                        World.subscribePlus subId (fun event world ->
+                            let mapSubscriptionImNui subscriptionImNui =
+                                let results = subscriptionImNui.Results :?> 'd FQueue
+                                { subscriptionImNui with Results = FQueue.conj event.Data results }
+                            let world = World.tryMapSubscriptionImNui mapSubscriptionImNui subscriptionKey world
+                            (Cascade, world))
+                            eventAddress'
+                            Game
+                            world
+                    World.addSubscriptionImNui subscriptionKey { SubscriptionUtilized = true; SubscriptionId = subId; Results = FQueue.empty<'d> } world
+            let results = (World.getSubscriptionImNui subscriptionKey world).Results :?> 'd FQueue
+            let world = World.mapSubscriptionImNui (fun subscriptionImNui -> { subscriptionImNui with Results = FQueue.empty<'d> }) subscriptionKey world
+            (results, world)
+
+        /// TODO: document this!
         static member initBodyResult mapResult (entity : Entity) world =
             let world = World.monitor (fun event world -> (Cascade, mapResult (FQueue.conj $ BodyPenetration event.Data) world)) entity.BodyPenetrationEvent entity world
             let world = World.monitor (fun event world -> (Cascade, mapResult (FQueue.conj $ BodySeparationExplicit event.Data) world)) entity.BodySeparationExplicitEvent entity world
@@ -60,33 +112,24 @@ module WorldImNui =
             World.setContext Address.empty world
 
         /// Begin the ImNui declaration of a game with the given arguments.
-        static member beginGamePlus<'r> (zero : 'r) init (args : Game ArgImNui seq) (world : World) : 'r * World =
+        static member beginGame args (world : World) =
             if world.ContextImNui.Names.Length > 0 then raise (InvalidOperationException "ImNui game declared outside of valid ImNui context (must be called in World context).")
             let gameAddress = Address.makeFromArray (Array.add Constants.Engine.GameName world.ContextImNui.Names)
             let world = World.setContext gameAddress world
             let game = Nu.Game gameAddress
             let (initializing, world) =
-                match world.SimulantImNuis.TryGetValue game with
-                | (true, gameImNui) -> (false, World.utilizeSimulantImNui game gameImNui world)
+                match world.SimulantImNuis.TryGetValue game.GameAddress with
+                | (true, gameImNui) -> (false, World.utilizeSimulantImNui game.GameAddress gameImNui world)
                 | (false, _) ->
-                    let world = World.addSimulantImNui game { Utilized = true; Result = zero } world
-                    let mapResult = fun (mapper : 'r -> 'r) world -> World.mapSimulantImNui (fun gameImNui -> { gameImNui with Result = mapper (gameImNui.Result :?> 'r) }) game world
-                    (true, init mapResult game world)
+                    let world = World.addSimulantImNui game.GameAddress { SimulantInitializing = true; SimulantUtilized = true; InitializationTime = Core.getTimeStampUnique (); Result = () } world
+                    (true, world)
             let initializing = initializing || Reinitializing
-            let world =
-                Seq.fold
-                    (fun world arg ->
-                        if initializing || not arg.ArgStatic
-                        then game.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
-                        else world)
-                    world args
-            let result = (World.getSimulantImNui game world).Result :?> 'r
-            let world = World.mapSimulantImNui (fun simulantImNui -> { simulantImNui with Result = zero }) game world
-            (result, world)
-
-        /// Begin the ImNui declaration of a game with the given arguments.
-        static member beginGame world args =
-            World.beginGamePlus<unit> () (fun _ _ world -> world) args world |> snd
+            Seq.fold
+                (fun world arg ->
+                    if initializing || not arg.ArgStatic
+                    then game.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
+                    else world)
+                world args
 
         /// End the ImNui declaration of a group with the given arguments.
         static member endGame (world : World) =
@@ -102,70 +145,7 @@ module WorldImNui =
                 (fun world arg -> game.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c')
                 world args
 
-        static member internal beginScreenPlus10<'d, 'r when 'd :> ScreenDispatcher> (zero : 'r) init transitionScreen setScreenSlide name select behavior groupFilePathOpt (args : Screen ArgImNui seq) (world : World) : ScreenResult FQueue * 'r * World =
-            if world.ContextImNui.Names.Length < 1 then raise (InvalidOperationException "ImNui screen declared outside of valid ImNui context (must be called in a Game context).")
-            let screenAddress = Address.makeFromArray (Array.add name world.ContextImNui.Names)
-            let world = World.setContext screenAddress world
-            let screen = Nu.Screen screenAddress
-            let world =
-                if not (screen.GetExists world) then
-                    let world = World.createScreen<'d> (Some name) world |> snd
-                    let world = World.setScreenProtected true screen world |> snd'
-                    match groupFilePathOpt with
-                    | Some groupFilePath -> World.readGroupFromFile groupFilePath None screen world |> snd
-                    | None -> world
-                else world
-            let (initializing, world) =
-                match world.SimulantImNuis.TryGetValue screen with
-                | (true, screenImNui) -> (false, World.utilizeSimulantImNui screen screenImNui world)
-                | (false, _) ->
-                    let world = World.addSimulantImNui screen { Utilized = true; Result = (FQueue.empty<ScreenResult>, zero) } world
-                    let mapFstResult =
-                        fun (mapper : ScreenResult FQueue -> ScreenResult FQueue) world ->
-                            World.mapSimulantImNui (fun screenImNui ->
-                                let (screenResult, userResult) = screenImNui.Result :?> ScreenResult FQueue * 'r
-                                { screenImNui with Result = (mapper screenResult, userResult) })
-                                screen world
-                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj Select) world)) screen.SelectEvent screen world
-                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj IncomingStart) world)) screen.IncomingStartEvent screen world
-                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj IncomingFinish) world)) screen.IncomingFinishEvent screen world
-                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj OutgoingStart) world)) screen.OutgoingStartEvent screen world
-                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj OutgoingFinish) world)) screen.OutgoingFinishEvent screen world
-                    let world = World.monitor (fun _ world -> (Cascade, mapFstResult (FQueue.conj Deselecting) world)) screen.DeselectingEvent screen world
-                    let mapSndResult =
-                        fun (mapper : 'r -> 'r) world ->
-                            World.mapSimulantImNui (fun screenImNui ->
-                                let (screenResult, userResult) = screenImNui.Result :?> ScreenResult FQueue * 'r
-                                { screenImNui with Result = (screenResult, mapper userResult) })
-                                screen world
-                    (true, init mapSndResult screen world)
-            let initializing = initializing || Reinitializing
-            let world =
-                Seq.fold
-                    (fun world arg ->
-                        if (initializing || not arg.ArgStatic) && screen.GetExists world
-                        then screen.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
-                        else world)
-                    world args
-            let world = if screen.GetExists world then World.applyScreenBehavior setScreenSlide behavior screen world else world
-            let world =
-                if screen.GetExists world && select then
-                    if world.Accompanied && world.Halted // special case to quick cut when halted in the editor
-                    then World.setSelectedScreen screen world
-                    else transitionScreen screen world
-                else world
-            let (screenResult, userResult) = (World.getSimulantImNui screen world).Result :?> ScreenResult FQueue * 'r
-            let world = World.mapSimulantImNui (fun simulantImNui -> { simulantImNui with Result = (FQueue.empty<ScreenResult>, zero) }) screen world
-            (screenResult, userResult, world)
-
-        static member internal beginScreen8<'d when 'd :> ScreenDispatcher> transitionScreen setScreenSlide name select behavior groupFilePathOpt args world : ScreenResult FQueue * World =
-            World.beginScreenPlus10<'d, unit> () (fun _ _ world -> world) transitionScreen setScreenSlide name select behavior groupFilePathOpt args world |> a_c
-
-        /// End the ImNui declaration of a screen.
-        static member endScreen (world : World) =
-            match world.ContextImNui with
-            | :? (Screen Address) -> World.setContext Game.GameAddress world
-            | _ -> raise (InvalidOperationException "World.beginScreen mismatch.")
+        (* NOTE: most of ImNui's screen functions are defined in WorldModule2.fs so they can access the internal screen transition APIs. *)
 
         /// Make a screen the current ImNui context.
         static member scopeScreen (screen : Screen) (args : Screen ArgImNui seq) world =
@@ -182,20 +162,22 @@ module WorldImNui =
             let groupAddress = Address.makeFromArray (Array.add name world.ContextImNui.Names)
             let world = World.setContext groupAddress world
             let group = Nu.Group groupAddress
-            let world =
-                if not (group.GetExists world) then
-                    let world =
-                        match groupFilePathOpt with
-                        | Some groupFilePath -> World.readGroupFromFile groupFilePath (Some name) group.Screen world |> snd
-                        | None -> World.createGroup<'d> (Some name) group.Screen world |> snd
-                    World.setGroupProtected true group world |> snd'
-                else world
             let (initializing, world) =
-                match world.SimulantImNuis.TryGetValue group with
-                | (true, groupImNui) -> (false, World.utilizeSimulantImNui group groupImNui world)
+                match world.SimulantImNuis.TryGetValue group.GroupAddress with
+                | (true, groupImNui) -> (false, World.utilizeSimulantImNui group.GroupAddress groupImNui world)
                 | (false, _) ->
-                    let world = World.addSimulantImNui group { Utilized = true; Result = () } world
-                    let mapResult = fun (mapper : 'r -> 'r) world -> World.mapSimulantImNui (fun groupImNui -> { groupImNui with Result = mapper (groupImNui.Result :?> 'r) }) group world
+                    let world =
+                        if not (group.GetExists world) then
+                            let world =
+                                match groupFilePathOpt with
+                                | Some groupFilePath -> World.readGroupFromFile groupFilePath (Some name) group.Screen world |> snd
+                                | None -> World.createGroup<'d> (Some name) group.Screen world |> snd
+                            World.setGroupProtected true group world |> snd'
+                        else world
+                    let world = World.addSimulantImNui group.GroupAddress { SimulantInitializing = true; SimulantUtilized = true; InitializationTime = Core.getTimeStampUnique (); Result = () } world
+                    let mapResult (mapper : 'r -> 'r) world =
+                        let mapGroupImNui groupImNui = { groupImNui with Result = mapper (groupImNui.Result :?> 'r) }
+                        World.tryMapSimulantImNui mapGroupImNui group.GroupAddress world
                     (true, init mapResult group world)
             let initializing = initializing || Reinitializing
             let world =
@@ -205,20 +187,41 @@ module WorldImNui =
                         then group.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
                         else world)
                     world args
-            let result = (World.getSimulantImNui group world).Result :?> 'r
-            let world = World.mapSimulantImNui (fun simulantImNui -> { simulantImNui with Result = zero }) group world
+            let result = match (World.getSimulantImNui group.GroupAddress world).Result with :? 'r as r -> r | _ -> zero
+            let world = World.mapSimulantImNui (fun simulantImNui -> { simulantImNui with Result = zero }) group.GroupAddress world
             (result, world)
 
-        static member private beginGroup4<'d> name groupFilePathOpt args world =
+        static member inline private beginGroup4<'d> name groupFilePathOpt args world =
             World.beginGroupPlus6 () (fun _ _ world -> world) name groupFilePathOpt args world |> snd
 
         /// Begin the ImNui declaration of a group read from the given file path with the given arguments.
-        static member beginGroupFromFilePlus<'d, 'r when 'd :> GroupDispatcher> zero init name groupFilePath args world =
-            World.beginGroupPlus6<'d, 'r> zero init name (Some groupFilePath) args world
-
-        /// Begin the ImNui declaration of a group read from the given file path with the given arguments.
-        static member beginGroupFromFile<'d when 'd :> GroupDispatcher> name groupFilePath args world =
-            World.beginGroup4<'d> name (Some groupFilePath) args world
+        /// Note that changing the file path over time has no effect as only the first moment is used.
+        static member beginGroupFromFile (name : string) (groupFilePath : string) args (world : World) =
+            if world.ContextImNui.Names.Length < 2 then raise (InvalidOperationException "ImNui group declared outside of valid ImNui context (must be called in a Screen context).")
+            let groupAddress = Address.makeFromArray (Array.add name world.ContextImNui.Names)
+            let world = World.setContext groupAddress world
+            let group = Nu.Group groupAddress
+            let (initializing, world) =
+                match world.SimulantImNuis.TryGetValue group.GroupAddress with
+                | (true, groupImNui) ->
+                    (false, World.utilizeSimulantImNui group.GroupAddress groupImNui world)
+                | (false, _) ->
+                    let world =
+                        if not (group.GetExists world) then
+                            let groupDescriptorStr = File.ReadAllText groupFilePath
+                            let groupDescriptor = scvalue<GroupDescriptor> groupDescriptorStr
+                            let world = World.readGroup groupDescriptor None group.Screen world |> snd
+                            World.setGroupProtected true group world |> snd'
+                        else world
+                    let world = World.addSimulantImNui group.GroupAddress { SimulantInitializing = true; SimulantUtilized = true; InitializationTime = Core.getTimeStampUnique (); Result = () } world
+                    (true, world)
+            let initializing = initializing || Reinitializing
+            Seq.fold
+                (fun world arg ->
+                    if (initializing || not arg.ArgStatic) && group.GetExists world
+                    then group.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
+                    else world)
+                world args
 
         /// Begin the ImNui declaration of a group with the given arguments.
         static member beginGroupPlus<'d, 'r when 'd :> GroupDispatcher> zero init name args world =
@@ -247,24 +250,25 @@ module WorldImNui =
                 world args
 
         /// Begin the ImNui declaration of an entity with the given arguments.
-        /// TODO: P1: optimize this for large-scale use.
         static member beginEntityPlus<'d, 'r when 'd :> EntityDispatcher> (zero : 'r) init name (args : Entity ArgImNui seq) (world : World) : 'r * World =
             if world.ContextImNui.Names.Length < 3 then raise (InvalidOperationException "ImNui entity declared outside of valid ImNui context (must be called in either Group or Entity context).")
             let entityAddress = Address.makeFromArray (Array.add name world.ContextImNui.Names)
             let world = World.setContext entityAddress world
             let entity = Nu.Entity entityAddress
-            let world = 
-                if not (entity.GetExists world) then
-                    let world = World.createEntity<'d> OverlayNameDescriptor.DefaultOverlay (Some entity.Surnames) entity.Group world |> snd
-                    let world = World.setEntityProtected true entity world |> snd'
-                    if entity.Surnames.Length > 1 then entity.SetMountOpt (Some (Relation.makeParent ())) world else world
-                else world
             let (initializing, world) =
-                match world.SimulantImNuis.TryGetValue entity with
-                | (true, entityImNui) -> (false, World.utilizeSimulantImNui entity entityImNui world)
+                match world.SimulantImNuis.TryGetValue entity.EntityAddress with
+                | (true, entityImNui) -> (false, World.utilizeSimulantImNui entity.EntityAddress entityImNui world)
                 | (false, _) ->
-                    let world = World.addSimulantImNui entity { Utilized = true; Result = zero } world
-                    let mapResult = fun (mapper : 'r -> 'r) world -> World.mapSimulantImNui (fun entityImNui -> { entityImNui with Result = mapper (entityImNui.Result :?> 'r) }) entity world
+                    let world =
+                        if not (entity.GetExists world) then
+                            let world = World.createEntity<'d> OverlayNameDescriptor.DefaultOverlay (Some entity.Surnames) entity.Group world |> snd
+                            let world = World.setEntityProtected true entity world |> snd'
+                            if entity.Surnames.Length > 1 then entity.SetMountOpt (Some (Relation.makeParent ())) world else world
+                        else world
+                    let world = World.addSimulantImNui entity.EntityAddress { SimulantInitializing = true; SimulantUtilized = true; InitializationTime = Core.getTimeStampUnique (); Result = zero } world
+                    let mapResult (mapper : 'r -> 'r) world =
+                        let mapEntityImNui entityImNui = { entityImNui with Result = mapper (entityImNui.Result :?> 'r) }
+                        World.tryMapSimulantImNui mapEntityImNui entity.EntityAddress world
                     (true, init mapResult entity world)
             let initializing = initializing || Reinitializing
             let world =
@@ -274,13 +278,42 @@ module WorldImNui =
                         then entity.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
                         else world)
                     world args
-            let result = (World.getSimulantImNui entity world).Result :?> 'r
-            let world = World.mapSimulantImNui (fun simulantImNui -> { simulantImNui with Result = zero }) entity world
+            let result = match (World.getSimulantImNui entity.EntityAddress world).Result with :? 'r as r -> r | _ -> zero
+            let world = World.mapSimulantImNui (fun simulantImNui -> { simulantImNui with Result = zero }) entity.EntityAddress world
             (result, world)
 
         /// Begin the ImNui declaration of an entity with the given arguments.
         static member beginEntity<'d when 'd :> EntityDispatcher> name args world =
             World.beginEntityPlus<'d, unit> () (fun _ _ world -> world) name args world |> snd
+
+        static member internal beginEntityFromDescriptor entityDescriptor (world : World) : bool * Entity * World =
+            if world.ContextImNui.Names.Length < 3 then raise (InvalidOperationException "ImNui entity declared outside of valid ImNui context (must be called in either Group or Entity context).")
+            let entityName = match EntityDescriptor.getNameOpt entityDescriptor with Some name -> name | None -> "Entity"
+            let entityAddress = Address.makeFromArray (Array.add entityName world.ContextImNui.Names)
+            let world = World.setContext entityAddress world
+            let entity = Nu.Entity entityAddress
+            let world =
+                if not (entity.GetExists world) then
+                    let world = World.readEntity entityDescriptor None entity.Group world |> snd
+                    World.setEntityProtected true entity world |> snd'
+                else world
+            match world.SimulantImNuis.TryGetValue entity.EntityAddress with
+            | (true, entityImNui) -> (false, entity, World.utilizeSimulantImNui entity.EntityAddress entityImNui world)
+            | (false, _) -> (true, entity, World.addSimulantImNui entity.EntityAddress { SimulantInitializing = true; SimulantUtilized = true; InitializationTime = Core.getTimeStampUnique (); Result = () } world)
+
+        /// Begin the ImNui declaration of a group read from the given file path with the given arguments.
+        /// Note that changing the file path over time has no effect as only the first moment is used.
+        static member internal beginEntityFromFile entityFilePath args world =
+            let entityDescriptorStr = File.ReadAllText entityFilePath
+            let entityDescriptor = scvalue<EntityDescriptor> entityDescriptorStr
+            let (initializing, entity, world) = World.beginEntityFromDescriptor entityDescriptor world
+            let initializing = initializing || Reinitializing
+            Seq.fold
+                (fun world arg ->
+                    if (initializing || not arg.ArgStatic) && entity.GetExists world
+                    then entity.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
+                    else world)
+                world args
 
         /// End the ImNui declaration of an entity.
         static member endEntity (world : World) =
@@ -344,26 +377,35 @@ module WorldImNui =
 
         /// ImNui declare a button with the given arguments.
         static member doButton name args world =
-            let init mapResult (entity : Entity) world = World.monitor (fun _ world -> (Cascade, mapResult (fun _ -> true) world)) entity.ClickEvent entity world
+            let init mapResult (entity : Entity) world = World.monitor (fun _ world -> (Cascade, mapResult tautology world)) entity.ClickEvent entity world
             World.doEntityPlus<ButtonDispatcher, _> false init name args world
 
         /// ImNui declare a toggle button with the given arguments.
         static member doToggleButton name args world =
-            let init mapResult (entity : Entity) world = World.monitor (fun evt world -> (Cascade, mapResult (fun _ -> evt.Data) world)) entity.ToggleEvent entity world
-            World.doEntityPlus<ToggleButtonDispatcher, _> false init name args world
+            let init mapResult (entity : Entity) world = World.monitor (fun _ world -> (Cascade, mapResult tautology world)) entity.ToggleEvent entity world
+            let (toggleChanged, world) = World.doEntityPlus<ToggleButtonDispatcher, _> false init name args world
+            (world.RecentEntity.GetToggled world, toggleChanged, world)
 
         /// ImNui declare a radio button with the given arguments.
         static member doRadioButton name args world =
-            let init mapResult (entity : Entity) world = World.monitor (fun evt world -> (Cascade, mapResult (fun _ -> evt.Data) world)) entity.DialEvent entity world
-            World.doEntityPlus<RadioButtonDispatcher, _> false init name args world
+            let init mapResult (entity : Entity) world = World.monitor (fun _ world -> (Cascade, mapResult tautology world)) entity.DialEvent entity world
+            let (dialChanged, world) = World.doEntityPlus<RadioButtonDispatcher, _> false init name args world
+            (world.RecentEntity.GetDialed world, dialChanged, world)
 
         /// ImNui declare a fill bar with the given arguments.
         static member doFillBar name args world = World.doEntity<FillBarDispatcher> name args world
 
         /// ImNui declare a feeler with the given arguments.
         static member doFeeler name args world =
-            let init mapResult (entity : Entity) world = World.monitor (fun _ world -> (Cascade, mapResult (fun _ -> true) world)) entity.TouchEvent entity world
-            World.doEntityPlus<ButtonDispatcher, _> false init name args world
+            let init mapResult (entity : Entity) world = World.monitor (fun _ world -> (Cascade, mapResult tautology world)) entity.TouchEvent entity world
+            let (touchChanged, world) = World.doEntityPlus<FeelerDispatcher, _> false init name args world
+            (world.RecentEntity.GetTouched world, touchChanged, world)
+
+        /// ImNui declare a text box entity with the given arguments.
+        static member doTextBox name args world =
+            let init mapResult (entity : Entity) world = World.monitor (fun _ world -> (Cascade, mapResult tautology world)) entity.TextEditEvent entity world
+            let (textChanged, world) = World.doEntityPlus<TextBoxDispatcher, _> false init name args world
+            (world.RecentEntity.GetText world, textChanged, world)
 
         /// ImNui declare an fps entity with the given arguments.
         static member doFps name args world = World.doEntity<FpsDispatcher> name args world
@@ -378,16 +420,34 @@ module WorldImNui =
         static member doPanel name args world = World.doEntity<PanelDispatcher> name args world
 
         /// ImNui declare a 2d block with the given arguments.
-        static member doBlock2d name args world = World.doEntityPlus<Block2dDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doBlock2d name args world =
+            let (results, world) = World.doEntityPlus<Block2dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a 2d box with the given arguments.
-        static member doBox2d name args world = World.doEntityPlus<Box2dDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doBox2d name args world =
+            let (results, world) = World.doEntityPlus<Box2dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
+
+        /// ImNui declare a 2d sphere with the given arguments.
+        static member doSphere2d name args world =
+            let (results, world) = World.doEntityPlus<Sphere2dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
+
+        /// ImNui declare a 2d ball with the given arguments.
+        static member doBall2d name args world =
+            let (results, world) = World.doEntityPlus<Ball2dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a 2d character with the given arguments.
-        static member doCharacter2d name args world = World.doEntityPlus<Character2dDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doCharacter2d name args world =
+            let (results, world) = World.doEntityPlus<Character2dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a tile map with the given arguments.
-        static member doTileMap name args world = World.doEntityPlus<TileMapDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doTileMap name args world =
+            let (results, world) = World.doEntityPlus<TileMapDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a 3d light probe with the given arguments.
         static member doLightProbe3d name args world = World.doEntity<LightProbe3dDispatcher> name args world
@@ -405,10 +465,24 @@ module WorldImNui =
         static member doEffect3d name args world = World.doEntity<Effect3dDispatcher> name args world
 
         /// ImNui declare a 3d block with the given arguments.
-        static member doBlock3d name args world = World.doEntityPlus<Block3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doBlock3d name args world =
+            let (results, world) = World.doEntityPlus<Block3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a 3d box with the given arguments.
-        static member doBox3d name args world = World.doEntityPlus<Box3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doBox3d name args world =
+            let (results, world) = World.doEntityPlus<Box3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
+
+        /// ImNui declare a 3d sphere with the given arguments.
+        static member doSphere3d name args world =
+            let (results, world) = World.doEntityPlus<Sphere3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
+
+        /// ImNui declare a 3d ball with the given arguments.
+        static member doBall3d name args world =
+            let (results, world) = World.doEntityPlus<Ball3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a static billboard with the given arguments.
         static member doStaticBillboard name args world = World.doEntity<StaticBillboardDispatcher> name args world
@@ -420,22 +494,32 @@ module WorldImNui =
         static member doStaticModelSurface name args world = World.doEntity<StaticModelSurfaceDispatcher> name args world
 
         /// ImNui declare a rigid model with the given arguments.
-        static member doRigidModel name args world = World.doEntityPlus<RigidModelDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doRigidModel name args world =
+            let (results, world) = World.doEntityPlus<RigidModelDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a rigid model with the given arguments.
-        static member doRigidModelSurface name args world = World.doEntityPlus<RigidModelSurfaceDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doRigidModelSurface name args world =
+            let (results, world) = World.doEntityPlus<RigidModelSurfaceDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a animated model with the given arguments.
         static member doAnimatedModel name args world = World.doEntity<AnimatedModelDispatcher> name args world
 
         /// ImNui declare a 3d character with the given arguments.
-        static member doCharacter3d name args world = World.doEntityPlus<Character3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doCharacter3d name args world =
+            let (results, world) = World.doEntityPlus<Character3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a 3d body joint with the given arguments.
-        static member doBodyJoint3d name args world = World.doEntityPlus<BodyJoint3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doBodyJoint3d name args world =
+            let (results, world) = World.doEntityPlus<BodyJoint3dDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyJointId world, results, world)
 
         /// ImNui declare a terrain with the given arguments.
-        static member doTerrain name args world = World.doEntityPlus<TerrainDispatcher, _> FQueue.empty World.initBodyResult name args world
+        static member doTerrain name args world =
+            let (results, world) = World.doEntityPlus<TerrainDispatcher, _> FQueue.empty World.initBodyResult name args world
+            (world.RecentEntity.GetBodyId world, results, world)
 
         /// ImNui declare a 3d nav config with the given arguments.
         static member doNav3dConfig name args world = World.doEntity<Nav3dConfigDispatcher> name args world

@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
@@ -42,7 +42,7 @@ type [<ReferenceEquality>] SdlConfig =
           ViewH = Constants.Render.Resolution.Y
           AudioChunkSize = Constants.Audio.BufferSizeDefault }
 
-[<AutoOpen>]
+[<RequireQualifiedAccess>]
 module SdlDeps =
 
     /// The dependencies needed to initialize SDL.

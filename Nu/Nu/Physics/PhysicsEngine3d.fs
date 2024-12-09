@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
@@ -56,7 +56,6 @@ type private KinematicCharacter3d =
       Ghost : GhostObject }
 
 /// The 3d implementation of PhysicsEngine in terms of Bullet Physics.
-/// TODO: only record the collisions for bodies that have event subscriptions associated with them?
 type [<ReferenceEquality>] PhysicsEngine3d =
     private
         { PhysicsContext : DynamicsWorld
@@ -141,7 +140,7 @@ type [<ReferenceEquality>] PhysicsEngine3d =
 
     static member private configureBodyProperties (bodyProperties : BodyProperties) (body : RigidBody) gravity =
         PhysicsEngine3d.configureCollisionObjectProperties bodyProperties body
-        body.WorldTransform <- Matrix4x4.CreateFromTrs (bodyProperties.Center, bodyProperties.Rotation, v3One)
+        body.WorldTransform <- Matrix4x4.CreateAffine (bodyProperties.Center, bodyProperties.Rotation, v3One)
         body.MotionState.WorldTransform <- body.WorldTransform
         if bodyProperties.SleepingAllowed // TODO: see if we can find a more reliable way to disable sleeping.
         then body.SetSleepingThresholds (Constants.Physics.SleepingThresholdLinear, Constants.Physics.SleepingThresholdAngular)
@@ -276,7 +275,7 @@ type [<ReferenceEquality>] PhysicsEngine3d =
         let inertia = hull.CalculateLocalInertia mass
         match pointsShape.TransformOpt with
         | Some transform ->
-            compoundShape.AddChildShape (Matrix4x4.CreateFromTrs (center, transform.Rotation, v3One), hull)
+            compoundShape.AddChildShape (Matrix4x4.CreateAffine (center, transform.Rotation, v3One), hull)
         | None ->
             compoundShape.AddChildShape (Matrix4x4.CreateTranslation center, hull)
         (center, mass, inertia, id) :: centerMassInertiaDisposes
@@ -323,7 +322,7 @@ type [<ReferenceEquality>] PhysicsEngine3d =
     // TODO: add some error logging.
     static member private attachStaticModelShape bodySource (bodyProperties : BodyProperties) (staticModelShape : StaticModelShape) (compoundShape : CompoundShape) centerMassInertiaDisposes physicsEngine =
         match Metadata.tryGetStaticModelMetadata staticModelShape.StaticModel with
-        | Some staticModel ->
+        | ValueSome staticModel ->
             Seq.fold (fun centerMassInertiaDisposes i ->
                 let surface = staticModel.Surfaces.[i]
                 let transform =
@@ -336,22 +335,22 @@ type [<ReferenceEquality>] PhysicsEngine3d =
                     | None -> Affine.makeFromMatrix surface.SurfaceMatrix
                 let staticModelSurfaceShape = { StaticModel = staticModelShape.StaticModel; SurfaceIndex = i; Convex = staticModelShape.Convex; TransformOpt = Some transform; PropertiesOpt = staticModelShape.PropertiesOpt }
                 match Metadata.tryGetStaticModelMetadata staticModelSurfaceShape.StaticModel with
-                | Some staticModel ->
+                | ValueSome staticModel ->
                     if  staticModelSurfaceShape.SurfaceIndex > -1 &&
                         staticModelSurfaceShape.SurfaceIndex < staticModel.Surfaces.Length then
                         let geometry = staticModel.Surfaces.[staticModelSurfaceShape.SurfaceIndex].PhysicallyBasedGeometry
                         let geometryShape = { Vertices = geometry.Vertices; Convex = staticModelSurfaceShape.Convex; TransformOpt = staticModelSurfaceShape.TransformOpt; PropertiesOpt = staticModelSurfaceShape.PropertiesOpt }
                         PhysicsEngine3d.attachGeometryShape bodySource bodyProperties geometryShape compoundShape centerMassInertiaDisposes physicsEngine
                     else centerMassInertiaDisposes
-                | None -> centerMassInertiaDisposes)
+                | ValueNone -> centerMassInertiaDisposes)
                 centerMassInertiaDisposes
                 [0 .. dec staticModel.Surfaces.Length]
-        | None -> centerMassInertiaDisposes
+        | ValueNone -> centerMassInertiaDisposes
 
     // TODO: add some error logging.
     static member private attachStaticModelShapeSurface bodySource (bodyProperties : BodyProperties) (staticModelSurfaceShape : StaticModelSurfaceShape) (compoundShape : CompoundShape) centerMassInertiaDisposes physicsEngine =
         match Metadata.tryGetStaticModelMetadata staticModelSurfaceShape.StaticModel with
-        | Some staticModel ->
+        | ValueSome staticModel ->
             if  staticModelSurfaceShape.SurfaceIndex > -1 &&
                 staticModelSurfaceShape.SurfaceIndex < staticModel.Surfaces.Length then
                 let surface = staticModel.Surfaces.[staticModelSurfaceShape.SurfaceIndex]
@@ -359,13 +358,13 @@ type [<ReferenceEquality>] PhysicsEngine3d =
                 let geometryShape = { Vertices = geometry.Vertices; Convex = staticModelSurfaceShape.Convex; TransformOpt = staticModelSurfaceShape.TransformOpt; PropertiesOpt = staticModelSurfaceShape.PropertiesOpt }
                 PhysicsEngine3d.attachGeometryShape bodySource bodyProperties geometryShape compoundShape centerMassInertiaDisposes physicsEngine
             else centerMassInertiaDisposes
-        | None -> centerMassInertiaDisposes
+        | ValueNone -> centerMassInertiaDisposes
 
     static member private attachTerrainShape tryGetAssetFilePath bodySource (bodyProperties : BodyProperties) (terrainShape : TerrainShape) (compoundShape : CompoundShape) centerMassInertiaDisposes =
         let resolution = terrainShape.Resolution
         let bounds = terrainShape.Bounds
         match HeightMap.tryGetMetadata tryGetAssetFilePath bounds v2One terrainShape.HeightMap with
-        | Some heightMapMetadata ->
+        | ValueSome heightMapMetadata ->
             let heights = Array.zeroCreate heightMapMetadata.HeightsNormalized.Length
             for i in 0 .. dec heightMapMetadata.HeightsNormalized.Length do
                 heights.[i] <- heightMapMetadata.HeightsNormalized.[i] * bounds.Height
@@ -392,7 +391,7 @@ type [<ReferenceEquality>] PhysicsEngine3d =
                 compoundShape.AddChildShape (Matrix4x4.CreateTranslation center, terrain)
                 (center, mass, inertia, fun () -> handle.Free ()) :: centerMassInertiaDisposes
             with _ -> centerMassInertiaDisposes
-        | None -> centerMassInertiaDisposes
+        | ValueNone -> centerMassInertiaDisposes
 
     static member private attachBodyShapes tryGetAssetFilePath bodySource bodyProperties bodyShapes compoundShape centerMassInertiaDisposes physicsEngine =
         List.fold (fun centerMassInertiaDisposes bodyShape ->
@@ -438,7 +437,7 @@ type [<ReferenceEquality>] PhysicsEngine3d =
             let ghost = new GhostObject ()
             ghost.CollisionShape <- shape
             ghost.CollisionFlags <- ghost.CollisionFlags ||| CollisionFlags.NoContactResponse
-            ghost.WorldTransform <- Matrix4x4.CreateFromTrs (bodyProperties.Center, bodyProperties.Rotation, bodyProperties.Scale)
+            ghost.WorldTransform <- Matrix4x4.CreateAffine (bodyProperties.Center, bodyProperties.Rotation, bodyProperties.Scale)
             ghost.UserObject <- { BodyId = bodyId; Dispose = disposer }
             ghost.UserIndex <- userIndex
             PhysicsEngine3d.configureCollisionObjectProperties bodyProperties ghost
@@ -459,7 +458,7 @@ type [<ReferenceEquality>] PhysicsEngine3d =
                 let ghost = new PairCachingGhostObject ()
                 ghost.CollisionShape <- convexShape
                 ghost.CollisionFlags <- ghost.CollisionFlags &&& ~~~CollisionFlags.NoContactResponse
-                ghost.WorldTransform <- Matrix4x4.CreateFromTrs (bodyProperties.Center + shapeTransform.Translation, bodyProperties.Rotation, bodyProperties.Scale)
+                ghost.WorldTransform <- Matrix4x4.CreateAffine (bodyProperties.Center + shapeTransform.Translation, bodyProperties.Rotation, bodyProperties.Scale)
                 ghost.UserObject <- { BodyId = bodyId; Dispose = disposer }
                 ghost.UserIndex <- userIndex
                 PhysicsEngine3d.configureCollisionObjectProperties bodyProperties ghost
@@ -488,7 +487,7 @@ type [<ReferenceEquality>] PhysicsEngine3d =
         else
             let constructionInfo = new RigidBodyConstructionInfo (mass, new DefaultMotionState (), shape, inertia)
             let body = new RigidBody (constructionInfo)
-            body.WorldTransform <- Matrix4x4.CreateFromTrs (bodyProperties.Center, bodyProperties.Rotation, bodyProperties.Scale)
+            body.WorldTransform <- Matrix4x4.CreateAffine (bodyProperties.Center, bodyProperties.Rotation, bodyProperties.Scale)
             body.MotionState.WorldTransform <- body.WorldTransform
             body.UserObject <- { BodyId = bodyId; Dispose = disposer }
             body.UserIndex <- userIndex
@@ -600,8 +599,8 @@ type [<ReferenceEquality>] PhysicsEngine3d =
                         hinge.SetLimit (hingeJoint.AngleMin, hingeJoint.AngleMax, hingeJoint.Softness, hingeJoint.BiasFactor, hingeJoint.RelaxationFactor)
                         Some (hinge :> TypedConstraint)
                     | SliderJoint sliderJoint ->
-                        let frameInA = Matrix4x4.CreateFromTrs (sliderJoint.Anchor, Quaternion.CreateFromYawPitchRoll (sliderJoint.Axis.Y, sliderJoint.Axis.X, sliderJoint.Axis.Z), v3One)
-                        let frameInB = Matrix4x4.CreateFromTrs (sliderJoint.Anchor2, Quaternion.CreateFromYawPitchRoll (sliderJoint.Axis2.Y, sliderJoint.Axis2.X, sliderJoint.Axis2.Z), v3One)
+                        let frameInA = Matrix4x4.CreateAffine (sliderJoint.Anchor, Quaternion.CreateFromYawPitchRoll (sliderJoint.Axis.Y, sliderJoint.Axis.X, sliderJoint.Axis.Z), v3One)
+                        let frameInB = Matrix4x4.CreateAffine (sliderJoint.Anchor2, Quaternion.CreateFromYawPitchRoll (sliderJoint.Axis2.Y, sliderJoint.Axis2.X, sliderJoint.Axis2.Z), v3One)
                         let slider = new SliderConstraint (body, body2, frameInA, frameInB, true)
                         slider.LowerLinearLimit <- sliderJoint.LinearLimitLower
                         slider.UpperLinearLimit <- sliderJoint.LinearLimitUpper
@@ -1105,23 +1104,19 @@ type [<ReferenceEquality>] PhysicsEngine3d =
             if rrc.HasHit then
                 match rrc with
                 | :? ClosestRayResultCallback as crrc ->
-                    [|match crrc.CollisionObject.UserObject with
-                      | :? BodyUserObject as bodyUserObject ->
-                        match crrc.CollisionObject.CollisionShape.UserObject with
-                        | :? BodyShapeIndex as shapeIndex -> (crrc.HitPointWorld, crrc.HitNormalWorld, crrc.ClosestHitFraction, shapeIndex, bodyUserObject.BodyId)
-                        | _ -> failwithumf ()
-                      | _ -> failwithumf ()|]
+                    [|  match crrc.CollisionObject.CollisionShape.UserObject with
+                        | :? BodyShapeIndex as shapeIndex ->
+                            BodyIntersection.make shapeIndex crrc.ClosestHitFraction crrc.HitPointWorld crrc.HitNormalWorld
+                        | _ -> failwithumf ()|]
                 | :? AllHitsRayResultCallback as ahrrc ->
                     [|for i in 0 .. dec ahrrc.CollisionObjects.Count do
                         let collisionObject = ahrrc.CollisionObjects.[i]
                         let hitPointWorld = ahrrc.HitPointWorld.[i]
                         let hitNormalWorld = ahrrc.HitNormalWorld.[i]
                         let hitFraction = ahrrc.HitFractions.[i]
-                        match collisionObject.UserObject with
-                        | :? BodyUserObject as bodyUserObject ->
-                            match collisionObject.CollisionShape.UserObject with
-                            | :? BodyShapeIndex as shapeIndex -> (hitPointWorld, hitNormalWorld, hitFraction, shapeIndex, bodyUserObject.BodyId)
-                            | _ -> failwithumf ()
+                        match collisionObject.CollisionShape.UserObject with
+                        | :? BodyShapeIndex as shapeIndex ->
+                            BodyIntersection.make shapeIndex hitFraction hitPointWorld hitNormalWorld
                         | _ -> failwithumf ()|]
                 | _ -> failwithumf ()
             else [||]

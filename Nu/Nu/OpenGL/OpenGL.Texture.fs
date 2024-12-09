@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace OpenGL
 open System
@@ -27,13 +27,15 @@ module Texture =
     let BlockCompressable (filePath : string) =
         let name = PathF.GetFileNameWithoutExtension filePath
         not (name.EndsWith "_n") &&
-        not (name.EndsWith "_u") &&
+        not (name.EndsWith "_hm") &&
         not (name.EndsWith "_b") &&
         not (name.EndsWith "_t") &&
+        not (name.EndsWith "_u") &&
         not (name.EndsWith "Normal") &&
-        not (name.EndsWith "Uncompressed") &&
+        not (name.EndsWith "HeightMap") &&
         not (name.EndsWith "Blend") &&
-        not (name.EndsWith "Tint")
+        not (name.EndsWith "Tint") &&
+        not (name.EndsWith "Uncompressed")
 
     /// Attempt to format an uncompressed pfim image texture (non-mipmap).
     /// TODO: make this an IImage extension and move elsewhere?
@@ -374,7 +376,6 @@ module Texture =
           TextureId : uint }
         member this.Destroy () =
             Gl.DeleteTextures [|this.TextureId|]
-            Hl.Assert ()
 
     /// A texture that can be loaded from another thread.
     type LazyTexture (filePath : string, minimalMetadata : TextureMetadata, minimalId : uint, fullMinFilter : TextureMinFilter, fullMagFilter : TextureMagFilter, fullAnisoFilter) =

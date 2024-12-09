@@ -1,5 +1,5 @@
 ﻿// Nu Game Engine.
-// Copyright (C) Bryan Edds, 2013-2023.
+// Copyright (C) Bryan Edds.
 
 namespace Nu
 open System
@@ -32,6 +32,11 @@ module WorldInputModule =
             ignore (world : World)
             MouseState.isButtonUp mouseButton
 
+        /// Check that the given mouse button was just clicked.
+        static member isMouseButtonClicked mouseButton world =
+            ignore (world : World)
+            MouseState.isButtonClicked mouseButton
+
         /// Get the position of the mouse.
         static member getMousePosition world =
             match World.tryGetWindowSize world with
@@ -61,11 +66,11 @@ module WorldInputModule =
             viewport.MouseToScreen3d (World.getMousePosition world)
 
         /// Get the 3d world ray of the mouse.
-        static member getMouseRay3dWorld absolute world =
+        static member getMouseRay3dWorld world =
             let viewport = World.getViewport world
             let eyeCenter = World.getEye3dCenter world
             let eyeRotation = World.getEye3dRotation world
-            viewport.MouseToWorld3d (absolute, World.getMousePosition world, eyeCenter, eyeRotation)
+            viewport.MouseToWorld3d (World.getMousePosition world, eyeCenter, eyeRotation)
 
         /// Check that the given keyboard key is down.
         static member isKeyboardKeyDown key world =
@@ -79,6 +84,11 @@ module WorldInputModule =
         static member isKeyboardKeyUp key world =
             ignore (world : World)
             KeyboardState.isKeyUp key
+
+        /// Check that the given keyboard key was just pressed.
+        static member isKeyboardKeyPressed key world =
+            ignore (world : World)
+            KeyboardState.isKeyPressed key
 
         /// Check that a keyboard alt key is down.
         static member isKeyboardAltDown world =

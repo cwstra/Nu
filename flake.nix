@@ -16,11 +16,9 @@
       });
     in {
 
-      #packages.x86_64-linux.hello = nixpkgs.legacyPackages.x86_64-linux.hello;
-      #packages.x86_64-linux.default = self.packages.x86_64-linux.hello;
       devShells = forAllSystems ({pkgs}: 
       let
-        selected-dotnet-sdk = pkgs.dotnetCorePackages.sdk_8_0_1xx;
+        selected-dotnet-sdk = pkgs.dotnet-sdk_9;
       in 
       {
         default = pkgs.mkShell {
@@ -29,9 +27,16 @@
             steam-run
             jetbrains.rider
           ];
-          shellHook = ''
-            export MSBuildSDKsPath=${selected-dotnet-sdk}/sdk/${selected-dotnet-sdk.version}/Sdks
-          '';
+          shellHook = 
+            if selected-dotnet-sdk.version < "9.0.0" 
+            then
+              ''
+                export MSBuildSDKsPath=${selected-dotnet-sdk}/sdk/${selected-dotnet-sdk.version}/Sdks
+              ''
+            else 
+              ''
+                export MSBuildSDKsPath=${selected-dotnet-sdk}/share/dotnet/sdk/${selected-dotnet-sdk.version}/Sdks
+              '';
         };
       });
     };

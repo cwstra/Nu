@@ -240,6 +240,12 @@ module WorldModuleEntity =
         static member internal getEntityExists entity world =
             notNull (World.getEntityStateOpt entity world :> obj)
 
+        static member internal getEntitySelected (entity : Entity) world =
+            let gameState = World.getGameState Game.Handle world
+            match gameState.SelectedScreenOpt with
+            | Some selectedScreen when entity.Screen.Name = selectedScreen.Name -> true
+            | _ -> false
+
         static member internal getEntityImperative entity world =
             (World.getEntityState entity world).Imperative
 
@@ -367,6 +373,7 @@ module WorldModuleEntity =
         static member internal getEntityEnabledLocal entity world = (World.getEntityState entity world).EnabledLocal
         static member internal getEntityVisible entity world = (World.getEntityState entity world).Visible
         static member internal getEntityVisibleLocal entity world = (World.getEntityState entity world).VisibleLocal
+        static member internal getEntityCastShadow entity world = (World.getEntityState entity world).CastShadow
         static member internal getEntityPickable entity world = (World.getEntityState entity world).Pickable
         static member internal getEntityAlwaysUpdate entity world = (World.getEntityState entity world).AlwaysUpdate
         static member internal getEntityAlwaysRender entity world = (World.getEntityState entity world).AlwaysRender
@@ -516,9 +523,8 @@ module WorldModuleEntity =
 #endif
             internal getEntityTransform entity world =
             let entityState = World.getEntityState entity world
-            let transform = &entityState.Transform
-            transform.CleanRotationMatrix () // OPTIMIZATION: ensure rotation matrix is clean so that redundant cleans don't happen when transform is handed out.
-            transform
+            Transform.cleanRotationMatrixInternal &entityState.Transform // OPTIMIZATION: ensure rotation matrix is clean so that redundant cleans don't happen when transform is handed out.
+            entityState.Transform
 
         /// Check that an entity has any children.
         static member getEntityHasChildren (entity : Entity) world =
@@ -1483,6 +1489,19 @@ module WorldModuleEntity =
                 struct (true, world)
             else struct (false, world)
 
+        static member internal setEntityCastShadow value entity world =
+            let entityState = World.getEntityState entity world
+            let previous = entityState.CastShadow
+            if value <> previous then
+                if entityState.Imperative then
+                    entityState.CastShadow <- value
+                    struct (true, world)
+                else
+                    let entityState = EntityState.diverge entityState
+                    entityState.CastShadow <- value
+                    struct (true, World.setEntityState entityState entity world)
+            else struct (false, world)
+
         static member internal setEntityPickable value entity world =
             let entityState = World.getEntityState entity world
             let previous = entityState.Pickable
@@ -2313,7 +2332,10 @@ module WorldModuleEntity =
             let world = World.updateEntityPublishUpdateFlag entity world |> snd'
 
             // process entity first time if in the middle of simulant update phase
-            let world = if WorldModule.UpdatingSimulants then WorldModule.tryProcessEntity entity world else world
+            let world =
+                if WorldModule.UpdatingSimulants && World.getEntitySelected entity world
+                then WorldModule.tryProcessEntity entity world
+                else world
 
             // propagate properties
             let world =
@@ -2373,7 +2395,10 @@ module WorldModuleEntity =
                         let destination = destination / child.Name
                         World.renameEntityImmediate child destination world)
                         world children
-                let world = if WorldModule.UpdatingSimulants then WorldModule.tryProcessEntity destination world else world
+                let world =
+                    if WorldModule.UpdatingSimulants && World.getEntitySelected destination world
+                    then WorldModule.tryProcessEntity destination world
+                    else world
                 let world =
                     Seq.fold (fun world target ->
                         if World.getEntityExists target world
@@ -2568,7 +2593,10 @@ module WorldModuleEntity =
             let world = World.readEntities entityDescriptor.EntityDescriptors entity world |> snd
 
             // process entity first time if in the middle of simulant update phase
-            let world = if WorldModule.UpdatingSimulants then WorldModule.tryProcessEntity entity world else world
+            let world =
+                if WorldModule.UpdatingSimulants && World.getEntitySelected entity world
+                then WorldModule.tryProcessEntity entity world
+                else world
 
             // insert a propagated descriptor if needed
             let world =
@@ -2753,6 +2781,7 @@ module WorldModuleEntity =
                  ("EnabledLocal", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityEnabledLocal entity world })
                  ("Visible", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityVisible entity world })
                  ("VisibleLocal", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityVisibleLocal entity world })
+                 ("CastShadow", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityCastShadow entity world })
                  ("Pickable", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityPickable entity world })
                  ("AlwaysUpdate", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityAlwaysUpdate entity world })
                  ("AlwaysRender", fun entity world -> { PropertyType = typeof<bool>; PropertyValue = World.getEntityAlwaysRender entity world })
@@ -2819,6 +2848,7 @@ module WorldModuleEntity =
                  ("EnabledLocal", fun property entity world -> World.setEntityEnabledLocal (property.PropertyValue :?> bool) entity world)
                  ("Visible", fun property entity world -> World.setEntityVisible (property.PropertyValue :?> bool) entity world)
                  ("VisibleLocal", fun property entity world -> World.setEntityVisibleLocal (property.PropertyValue :?> bool) entity world)
+                 ("CastShadow", fun property entity world -> World.setEntityCastShadow (property.PropertyValue :?> bool) entity world)
                  ("Pickable", fun property entity world -> World.setEntityPickable (property.PropertyValue :?> bool) entity world)
                  ("Static", fun property entity world -> World.setEntityStatic (property.PropertyValue :?> bool) entity world)
                  ("AlwaysUpdate", fun property entity world -> World.setEntityAlwaysUpdate (property.PropertyValue :?> bool) entity world)

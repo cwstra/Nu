@@ -96,8 +96,7 @@ module WorldScreenModule =
 
         /// Set an xtension property value.
         member this.Set<'a> propertyName (value : 'a) world =
-            let property = { PropertyType = typeof<'a>; PropertyValue = value }
-            World.setScreenXtensionProperty propertyName property this world |> snd'
+            World.setScreenXtensionValue<'a> propertyName value this world
 
         /// Check that a screen is in an idling state (not transitioning in nor out).
         member this.GetIdling world =
@@ -105,15 +104,11 @@ module WorldScreenModule =
             | IdlingState _ -> true
             | _ -> false
 
-        /// Check that a screen is selected.
-        member this.GetSelected world =
-            let gameState = World.getGameState Game.Handle world
-            match gameState.SelectedScreenOpt with
-            | Some screen when this.Name = screen.Name -> true
-            | _ -> false
-
         /// Check that a screen exists in the world.
         member this.GetExists world = World.getScreenExists this world
+
+        /// Check that a screen is selected.
+        member this.GetSelected world = World.getScreenSelected this world
 
         /// Check that a screen dispatches in the same manner as the dispatcher with the given type.
         member this.Is (dispatcherType, world) = Reflection.dispatchesAs dispatcherType (this.GetDispatcher world)
@@ -230,7 +225,10 @@ module WorldScreenModule =
                     else failwith ("Screen '" + scstring screen + "' already exists and cannot be created."); world
                 else world
             let world = World.addScreen false screenState screen world
-            let world = if WorldModule.UpdatingSimulants then WorldModule.tryProcessScreen screen world else world
+            let world =
+                if WorldModule.UpdatingSimulants && screen.GetSelected world
+                then WorldModule.tryProcessScreen screen world
+                else world
             (screen, world)
 
         /// Create a screen from a simulant descriptor.
@@ -326,7 +324,10 @@ module WorldScreenModule =
             let world = World.readGroups screenDescriptor.GroupDescriptors screen world |> snd
 
             // attempt to process ImNui screen first time if in the middle of simulant update phase
-            let world = if WorldModule.UpdatingSimulants then WorldModule.tryProcessScreen screen world else world
+            let world =
+                if WorldModule.UpdatingSimulants && screen.GetSelected world
+                then WorldModule.tryProcessScreen screen world
+                else world
             (screen, world)
 
         /// Read multiple screens from a game descriptor.

@@ -270,8 +270,7 @@ module WorldImNui =
                     let world =
                         if not (entity.GetExists world) then
                             let world = World.createEntity<'d> OverlayNameDescriptor.DefaultOverlay (Some entity.Surnames) entity.Group world |> snd
-                            let world = World.setEntityProtected true entity world |> snd'
-                            if entity.Surnames.Length > 1 then entity.SetMountOpt (Some (Relation.makeParent ())) world else world
+                            World.setEntityProtected true entity world |> snd'
                         else world
                     let world = World.addSimulantImNui entity.EntityAddress { SimulantInitializing = true; SimulantUtilized = true; InitializationTime = Core.getTimeStampUnique (); Result = zero } world
                     let mapResult (mapper : 'r -> 'r) world =
@@ -286,6 +285,10 @@ module WorldImNui =
                         then entity.TrySetProperty arg.ArgLens.Name { PropertyType = arg.ArgLens.Type; PropertyValue = arg.ArgValue } world |> __c'
                         else world)
                     world args
+            let world =
+                if initializing && entity.GetExists world && entity.Surnames.Length > 1
+                then entity.SetMountOpt (Some (Relation.makeParent ())) world
+                else world
             let result = match (World.getSimulantImNui entity.EntityAddress world).Result with :? 'r as r -> r | _ -> zero
             let world = World.mapSimulantImNui (fun simulantImNui -> { simulantImNui with Result = zero }) entity.EntityAddress world
             (result, world)
@@ -365,6 +368,9 @@ module WorldImNui =
         /// ImNui declare an empty association of gui entities with the given arguments.
         static member doAssociation name args world = World.doEntity<GuiDispatcher> name args world
 
+        /// ImNui declare a basic static sprite emitter with the given arguments.
+        static member doBasicStaticSpriteEmitter name args world = World.doEntity<BasicStaticSpriteEmitterDispatcher> name args world
+
         /// ImNui declare a 2d effect with the given arguments.
         static member doEffect2d name args world = World.doEntity<Effect2dDispatcher> name args world
 
@@ -373,9 +379,6 @@ module WorldImNui =
 
         /// ImNui declare an animated sprite with the given arguments.
         static member doAnimatedSprite name args world = World.doEntity<AnimatedSpriteDispatcher> name args world
-
-        /// ImNui declare a basic static sprite emitter with the given arguments.
-        static member doBasicStaticSpriteEmitter name args world = World.doEntity<BasicStaticSpriteEmitterDispatcher> name args world
 
         /// ImNui declare a text entity with the given arguments.
         static member doText name args world = World.doEntity<TextDispatcher> name args world

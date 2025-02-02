@@ -99,6 +99,11 @@ type [<ReferenceEquality>] PhysicsEngine3d =
           BodyConstraints : Dictionary<BodyJointId, Constraint>
           IntegrationMessages : IntegrationMessage List }
 
+    static member sanitizeScale scale =
+        let scale' = Vector3.Max (scale, v3Dup 0.001f) // prevent having near zero or negative size
+        if scale' <> scale then Log.warnOnce ("3D physics engine received scale too near or less than zero. Using " + scstring scale' + " instead.")
+        scale'
+
     static member private handleBodyPenetration (bodyId : BodyId) (body2Id : BodyId) (contactNormal : Vector3) physicsEngine =
 
         // construct body penetration message
@@ -169,9 +174,11 @@ type [<ReferenceEquality>] PhysicsEngine3d =
         let shapeSettings =
             match boxShape.TransformOpt with
             | Some transform ->
-                let shapeScale = bodyProperties.Scale * transform.Scale
+                let shapeScale = bodyProperties.Scale * transform.Scale |> PhysicsEngine3d.sanitizeScale
                 new ScaledShapeSettings (shapeSettings, &shapeScale) : ShapeSettings
-            | None when bodyProperties.Scale <> v3One -> new ScaledShapeSettings (shapeSettings, &bodyProperties.Scale)
+            | None when bodyProperties.Scale <> v3One ->
+                let shapeScale = bodyProperties.Scale |> PhysicsEngine3d.sanitizeScale
+                new ScaledShapeSettings (shapeSettings, &shapeScale)
             | None -> shapeSettings
         let bodyShapeId = match boxShape.PropertiesOpt with Some properties -> properties.BodyShapeIndex | None -> bodyProperties.BodyIndex
         scShapeSettings.AddShape (&center, &rotation, shapeSettings, uint bodyShapeId)
@@ -192,9 +199,11 @@ type [<ReferenceEquality>] PhysicsEngine3d =
         let shapeSettings =
             match sphereShape.TransformOpt with
             | Some transform ->
-                let shapeScale = bodyProperties.Scale * transform.Scale
+                let shapeScale = bodyProperties.Scale * transform.Scale |> PhysicsEngine3d.sanitizeScale
                 new ScaledShapeSettings (shapeSettings, &shapeScale) : ShapeSettings
-            | None when bodyProperties.Scale <> v3One -> new ScaledShapeSettings (shapeSettings, &bodyProperties.Scale)
+            | None when bodyProperties.Scale <> v3One ->
+                let shapeScale = bodyProperties.Scale |> PhysicsEngine3d.sanitizeScale
+                new ScaledShapeSettings (shapeSettings, &shapeScale)
             | None -> shapeSettings
         let bodyShapeId = match sphereShape.PropertiesOpt with Some properties -> properties.BodyShapeIndex | None -> bodyProperties.BodyIndex
         scShapeSettings.AddShape (&center, &rotation, shapeSettings, uint bodyShapeId)
@@ -215,9 +224,11 @@ type [<ReferenceEquality>] PhysicsEngine3d =
         let shapeSettings =
             match capsuleShape.TransformOpt with
             | Some transform ->
-                let shapeScale = bodyProperties.Scale * transform.Scale
+                let shapeScale = bodyProperties.Scale * transform.Scale |> PhysicsEngine3d.sanitizeScale
                 new ScaledShapeSettings (shapeSettings, &shapeScale) : ShapeSettings
-            | None when bodyProperties.Scale <> v3One -> new ScaledShapeSettings (shapeSettings, &bodyProperties.Scale)
+            | None when bodyProperties.Scale <> v3One ->
+                let shapeScale = bodyProperties.Scale |> PhysicsEngine3d.sanitizeScale
+                new ScaledShapeSettings (shapeSettings, &shapeScale)
             | None -> shapeSettings
         let bodyShapeId = match capsuleShape.PropertiesOpt with Some properties -> properties.BodyShapeIndex | None -> bodyProperties.BodyIndex
         scShapeSettings.AddShape (&center, &rotation, shapeSettings, uint bodyShapeId)
@@ -259,10 +270,10 @@ type [<ReferenceEquality>] PhysicsEngine3d =
         let (scale, shapeSettings) =
             match pointsShape.TransformOpt with
             | Some transform ->
-                let shapeScale = bodyProperties.Scale * transform.Scale
+                let shapeScale = bodyProperties.Scale * transform.Scale |> PhysicsEngine3d.sanitizeScale
                 (shapeScale, (new ScaledShapeSettings (shapeSettings, &shapeScale) : ShapeSettings))
             | None when bodyProperties.Scale <> v3One ->
-                let shapeScale = bodyProperties.Scale
+                let shapeScale = bodyProperties.Scale |> PhysicsEngine3d.sanitizeScale
                 (shapeScale, new ScaledShapeSettings (shapeSettings, &shapeScale))
             | None -> (v3One, shapeSettings)
         let bodyShapeId = match pointsShape.PropertiesOpt with Some properties -> properties.BodyShapeIndex | None -> bodyProperties.BodyIndex
@@ -293,10 +304,10 @@ type [<ReferenceEquality>] PhysicsEngine3d =
         let (scale, shapeSettings) =
             match geometryShape.TransformOpt with
             | Some transform ->
-                let shapeScale = bodyProperties.Scale * transform.Scale
+                let shapeScale = bodyProperties.Scale * transform.Scale |> PhysicsEngine3d.sanitizeScale
                 (shapeScale, (new ScaledShapeSettings (shapeSettings, &shapeScale) : ShapeSettings))
             | None when bodyProperties.Scale <> v3One ->
-                let shapeScale = bodyProperties.Scale
+                let shapeScale = bodyProperties.Scale |> PhysicsEngine3d.sanitizeScale
                 (shapeScale, new ScaledShapeSettings (shapeSettings, &shapeScale))
             | None -> (v3One, shapeSettings)
         let bodyShapeId = match geometryShape.PropertiesOpt with Some properties -> properties.BodyShapeIndex | None -> bodyProperties.BodyIndex
@@ -568,6 +579,13 @@ type [<ReferenceEquality>] PhysicsEngine3d =
             physicsEngine.Characters.Add (bodyId, character)
 
         else
+
+            // ensure we have at least one shape child in order to avoid jolt error
+            if scShapeSettings.NumSubShapes = 0u then
+                let position = v3Zero
+                let rotation = quatIdentity
+                let centerOfMass = v3Zero
+                scShapeSettings.AddShape (&position, &rotation, new EmptyShapeSettings (&centerOfMass))
 
             // configure and create non-character body
             let layer = if bodyProperties.BodyType.IsStatic then Constants.Physics.ObjectLayerNonMoving else Constants.Physics.ObjectLayerMoving
@@ -1247,15 +1265,6 @@ type [<ReferenceEquality>] PhysicsEngine3d =
 
         member physicsEngine.ClearInternal () =
 
-            // compute whether the physics engine will be affected by this clear request
-            let affected =
-                physicsEngine.Characters.Count > 0 ||
-                physicsEngine.BodyConstraints.Count > 0 ||
-                physicsEngine.Bodies.Count > 0 ||
-                physicsEngine.CreateBodyJointMessages.Count > 0 ||
-                physicsEngine.BodyConstraints.Count > 0 ||
-                physicsEngine.IntegrationMessages.Count > 0
-
             // clear any in-flight character contacts
             lock physicsEngine.CharacterContactLock $ fun () ->
                 physicsEngine.CharacterContactEvents.Clear ()
@@ -1302,9 +1311,6 @@ type [<ReferenceEquality>] PhysicsEngine3d =
 
             // clear integration messages
             physicsEngine.IntegrationMessages.Clear ()
-
-            // fin
-            affected
 
         member physicsEngine.CleanUp () =
             physicsEngine.JobSystem.Dispose ()

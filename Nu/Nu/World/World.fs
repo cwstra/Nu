@@ -127,7 +127,7 @@ module WorldModule3 =
             Map.ofList [World.pairWithName (GroupDispatcher ())]
 
         static member private makeDefaultEntityDispatchers () =
-            // TODO: consider if we should reflectively generate these.
+            // TODO: consider if we should reflectively generate most of these.
             Map.ofListBy World.pairWithName $
                 [EntityDispatcher (true, false, false, false)
                  Entity2dDispatcher (false, false, false)
@@ -180,7 +180,7 @@ module WorldModule3 =
                  RigidModelHierarchyDispatcher ()]
 
         static member private makeDefaultFacets () =
-            // TODO: consider if we should reflectively generate these.
+            // TODO: consider if we should reflectively generate most of these.
             Map.ofListBy World.pairWithName $
                 [Facet (false, false, false)
                  StaticSpriteFacet ()
@@ -218,7 +218,7 @@ module WorldModule3 =
         static member updateLateBindings (assemblies : Assembly array) world =
             WorldImNui.Reinitializing <- true
             Content.UpdateLateBindingsCount <- inc Content.UpdateLateBindingsCount
-            World.clearClipboard world // HACK: clear what's on the clipboard rather than changing its dispatcher instance.
+            World.clearEntityFromClipboard world // HACK: clear what's on the clipboard rather than changing its dispatcher instance.
             world.WorldExtension.Plugin.CleanUp ()
             let pluginType =
                 assemblies |>
